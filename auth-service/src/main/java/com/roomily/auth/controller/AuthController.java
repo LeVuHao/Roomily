@@ -18,12 +18,20 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+import com.roomily.auth.dto.response.AuditLogResponse;
+import com.roomily.auth.service.AuditLogService;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
+
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
 public class AuthController {
 
     private final AuthService authService;
+    private final AuditLogService auditLogService;
 
     @PostMapping("/register")
     public ResponseEntity<ApiResponse<UserResponse>> register(@Valid @RequestBody RegisterRequest req) {
@@ -31,6 +39,33 @@ public class AuthController {
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(ApiResponse.success("Đăng ký tài khoản thành công", res));
     }
+
+    @PostMapping("/landlord-request")
+    public ResponseEntity<ApiResponse<com.roomily.auth.dto.response.LandlordRegistrationResponse>> createLandlordRequest(
+            @Valid @RequestBody com.roomily.auth.dto.request.CreateLandlordApplicationRequest req) {
+        com.roomily.auth.dto.response.LandlordRegistrationResponse res = authService.createLandlordRequest(req);
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Tạo yêu cầu đăng ký chủ trọ thành công. Vui lòng quét mã QR thanh toán!", res));
+    }
+
+    @GetMapping("/landlord-request/{code}")
+    public ResponseEntity<ApiResponse<com.roomily.auth.dto.response.LandlordRegistrationResponse>> getLandlordRequestByCode(
+            @PathVariable String code) {
+        com.roomily.auth.dto.response.LandlordRegistrationResponse res = authService.getLandlordRequestByCode(code);
+        return ResponseEntity.ok(ApiResponse.success(res));
+    }
+
+    @PostMapping("/payment/sepay-webhook")
+    public ResponseEntity<java.util.Map<String, Object>> handleSepayWebhook(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestBody com.roomily.auth.dto.request.SepayWebhookRequest webhook) {
+        boolean success = authService.processSepayWebhook(webhook, authHeader);
+        java.util.Map<String, Object> res = new java.util.HashMap<>();
+        res.put("success", success);
+        res.put("message", success ? "Xử lý kích hoạt thành công" : "Bỏ qua hoặc không khớp giao dịch");
+        return ResponseEntity.ok(res);
+    }
+
 
     @PostMapping("/landlord/register")
     public ResponseEntity<ApiResponse<UserResponse>> registerLandlord(@Valid @RequestBody LandlordRegisterRequest req) {
@@ -91,4 +126,12 @@ public class AuthController {
         Map<String, String> res = authService.getUserStatus(userId);
         return ResponseEntity.ok(ApiResponse.success(res));
     }
+    @GetMapping("/my-audit-logs")
+    public ResponseEntity<ApiResponse<Page<AuditLogResponse>>> getMyAuditLogs(
+            @RequestHeader(value = "X-User-Email", required = false) String email,
+            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        Page<AuditLogResponse> page = auditLogService.searchByEmail(email, pageable);
+        return ResponseEntity.ok(ApiResponse.success(page));
+    }
+
 }

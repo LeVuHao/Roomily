@@ -46,12 +46,21 @@ public class Property {
     @Column(length = 500)
     private String utilities;
 
-    @Column
+    @Column(columnDefinition = "DECIMAL(10,7)")
     private Double latitude;
 
-    @Column
+    @Column(columnDefinition = "DECIMAL(10,7)")
     private Double longitude;
 
+    // ACTIVE | HIDDEN (admin tạm ẩn) | DELETED (admin xóa mềm)
+    @Column(nullable = false, columnDefinition = "VARCHAR(20) NOT NULL DEFAULT 'ACTIVE'")
+    @Builder.Default
+    private String status = "ACTIVE";
+
+    @Column(name = "status_reason", length = 500)
+    private String statusReason;
+
+>>>>>>> 1125b61ced2b9157f87664a0bcf423d39de5f70a
     @OneToMany(mappedBy = "property", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<Room> rooms = new ArrayList<>();

@@ -6,6 +6,8 @@ export const authApi = {
   login: (data) => api.post("/auth/login", data),
   register: (data) => api.post("/auth/register", data),
   registerLandlord: (data) => api.post("/auth/landlord/register", data),
+  createLandlordRequest: (data) => api.post("/auth/landlord-request", data),
+  getLandlordRequestStatus: (code) => api.get(`/auth/landlord-request/${code}`),
   loginWithGoogle: (data) => api.post("/auth/google", data),
   forgotPassword: (data) => api.post("/auth/forgot-password", data),
   resetPassword: (data) => api.post("/auth/reset-password", data),
@@ -13,6 +15,7 @@ export const authApi = {
   updateProfile: (data) => api.put("/auth/profile", data),
   getUserInfo: (id) => api.get(`/auth/users/${id}`),
   getLandlordStatus: (userId) => api.get(`/auth/landlord/status/${userId}`),
+  getMyAuditLogs: (params) => api.get("/auth/my-audit-logs", { params }),
 };
 
 export const propertyApi = {
@@ -24,13 +27,19 @@ export const propertyApi = {
   createProperty: (data) => api.post("/properties", data),
   getMyProperties: () => api.get("/properties/my-properties"),
   updateProperty: (id, data) => api.put(`/properties/${id}`, data),
+  deleteProperty: (id) => api.delete(`/properties/${id}`),
   getPropertyDetail: (id) => api.get(`/properties/${id}`),
   getPropertyRooms: (id) => api.get(`/properties/${id}/rooms`),
 
   // Landlord: Phòng trọ
   createRoom: (data) => api.post("/rooms", data),
   updateRoom: (id, data) => api.put(`/rooms/${id}`, data),
+  deleteRoom: (id) => api.delete(`/rooms/${id}`),
   addRoomImages: (id, data) => api.post(`/rooms/${id}/images`, data),
+  uploadRoomImages: (id, formData) =>
+    api.post(`/rooms/${id}/upload-images`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }),
 };
 
 export const rentalApi = {
@@ -49,6 +58,8 @@ export const rentalApi = {
     api.post(`/rental/posts/${postId}/join`, data),
   getJoinRequests: (postId) => api.get(`/rental/posts/${postId}/requests`),
   approveJoinRequest: (id) => api.post(`/rental/posts/requests/${id}/approve`),
+  rejectJoinRequest: (id) => api.post(`/rental/posts/requests/${id}/reject`),
+  getMyJoinRequests: () => api.get("/rental/posts/my-join-requests"),
 };
 
 // [HUY] Contract API
@@ -56,17 +67,16 @@ export const contractApi = {
   getMyContracts: () => api.get("/contracts/my"),
   getLandlordContracts: () => api.get("/contracts/landlord"),
   getContractDetail: (id) => api.get(`/contracts/${id}`),
+  terminateContract: (id) => api.put(`/contracts/${id}/terminate`),
 };
 
 export const billingApi = {
   getMyBills: () => api.get("/bills/my-bills"),
   getLandlordBills: () => api.get("/bills/landlord-bills"),
   createBill: (data) => api.post("/bills", data),
-  createBillPaymentUrl: (billId, amount) =>
-    api.post(`/payments/create-bill-payment-url/${billId}?amount=${amount}`),
-  // Public: xác nhận kết quả thanh toán VNPay trả về (dùng ở trang callback)
-  confirmVnpayCallback: (queryString) =>
-    api.get(`/payments/vnpay-callback${queryString}`),
+  updateBillStatus: (billId, status) =>
+    api.patch(`/bills/${billId}/status?status=${status}`),
+  getBillPaymentQr: (billId) => api.get(`/bills/${billId}/qr`),
 };
 
 export const notificationApi = {
@@ -80,6 +90,52 @@ export const adminApi = {
   getUsers: (params) => api.get("/auth/admin/users", { params }),
   lockUser: (id) => api.put(`/auth/admin/users/${id}/lock`),
   unlockUser: (id) => api.put(`/auth/admin/users/${id}/unlock`),
+
+  // ===== Quản lý & Cấp quyền Chủ trọ =====
+  createLandlordDirectly: (data) => api.post("/auth/admin/landlords", data),
+  getLandlordRequests: (params) => api.get("/auth/admin/landlord-requests", { params }),
+  approveLandlordRequest: (id, data) => api.post(`/auth/admin/landlord-requests/${id}/approve`, data),
+  rejectLandlordRequest: (id, data) => api.post(`/auth/admin/landlord-requests/${id}/reject`, data),
+
+  // ===== Nhật ký hệ thống =====
+  getAuditLogs: (params) => api.get("/auth/admin/audit-logs", { params }),
+  getAuditActions: () => api.get("/auth/admin/audit-logs/actions"),
+
+  // ===== Task 2.1: Khu trọ & Phòng =====
+  getProperties: (params) => api.get("/admin/properties", { params }),
+  getPropertyDetail: (id) => api.get(`/admin/properties/${id}`),
+  updatePropertyStatus: (id, data) => api.patch(`/admin/properties/${id}/status`, data),
+  deleteProperty: (id, reason) =>
+    api.delete(`/admin/properties/${id}`, { params: reason ? { reason } : {} }),
+
+  // ===== Task 2.2: Diễn đàn & Bài đăng =====
+  getForumPosts: (params) => api.get("/admin/forum/posts", { params }),
+  getForumPostStats: () => api.get("/admin/forum/posts/stats"),
+  updateForumPostStatus: (id, data) => api.patch(`/admin/forum/posts/${id}/status`, data),
+  deleteForumPost: (id, reason) =>
+    api.delete(`/admin/forum/posts/${id}`, { params: reason ? { reason } : {} }),
+
+  // ===== Task 2.3: Danh mục dữ liệu =====
+  getAmenities: () => api.get("/admin/amenities"),
+  createAmenity: (data) => api.post("/admin/amenities", data),
+  updateAmenity: (id, data) => api.put(`/admin/amenities/${id}`, data),
+  getAmenity: (id) => api.get(`/admin/amenities/${id}`),
+  deleteAmenity: (id) => api.delete(`/admin/amenities/${id}`),
+
+  // ===== Báo cáo vi phạm =====
+  getReports: (params) => api.get("/admin/reports", { params }),
+  getReportStats: () => api.get("/admin/reports/stats"),
+  getReportDetail: (id) => api.get(`/admin/reports/${id}`),
+  resolveReport: (id, data) => api.put(`/admin/reports/${id}/resolve`, data),
+};
+
+export const reportApi = {
+  createReport: (data) => api.post("/reports", data),
+};
+
+// Dữ liệu danh mục công khai (do Admin quản lý)
+export const catalogApi = {
+  getAmenities: () => api.get("/amenities"),
 };
 
 export const forumApi = {

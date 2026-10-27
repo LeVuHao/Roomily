@@ -43,6 +43,9 @@ public class ForumPostResponse {
     private Double longitude;
     private List<NearbyPlace> nearbyPlaces;
     private String status;
+    private String moderationStatus;
+    private String rejectReason;
+    private LocalDateTime moderatedAt;
     private List<String> images;
     private LocalDateTime createdAt;
 
@@ -79,6 +82,9 @@ public class ForumPostResponse {
                 .longitude(post.getLongitude())
                 .nearbyPlaces(post.getNearbyPlaces())
                 .status(post.getStatus())
+                .moderationStatus(post.getModerationStatus())
+                .rejectReason(post.getRejectReason())
+                .moderatedAt(post.getModeratedAt())
                 .images(imgUrls)
                 .createdAt(post.getCreatedAt())
                 .build();

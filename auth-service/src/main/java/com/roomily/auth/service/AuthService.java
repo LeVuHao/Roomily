@@ -37,6 +37,7 @@ public class AuthService {
     private static final int CODE_EXPIRE_MINUTES = 10;
 
     private final UserRepository userRepository;
+    private final com.roomily.auth.repository.LandlordRegistrationRequestRepository landlordRegistrationRequestRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final GoogleTokenVerifier googleTokenVerifier;
@@ -44,6 +45,179 @@ public class AuthService {
     private final MailService mailService;
 
     private final SecureRandom secureRandom = new SecureRandom();
+
+    @Transactional
+    public com.roomily.auth.dto.response.LandlordRegistrationResponse createLandlordRequest(com.roomily.auth.dto.request.CreateLandlordApplicationRequest req) {
+        if (userRepository.existsByEmail(req.getEmail())) {
+            User existing = userRepository.findByEmail(req.getEmail()).orElse(null);
+            if (existing != null && "LANDLORD".equalsIgnoreCase(existing.getRole())) {
+                throw new BadRequestException("Email này đã có tài khoản chủ trọ trong hệ thống");
+            }
+        }
+
+        // Sinh mã thanh toán độc nhất không dấu gạch: SEPAYLL<timestamp 6 so cuoi><random 4 so>
+        String randomSuffix = String.format("%04d", secureRandom.nextInt(10000));
+        String code = "SEPAYLL" + (System.currentTimeMillis() % 1000000) + randomSuffix;
+
+        java.math.BigDecimal reqAmount = (req.getAmount() != null && req.getAmount().compareTo(java.math.BigDecimal.ZERO) > 0)
+                ? req.getAmount()
+                : java.math.BigDecimal.valueOf(5000);
+
+        com.roomily.auth.entity.LandlordRegistrationRequest request = com.roomily.auth.entity.LandlordRegistrationRequest.builder()
+                .fullName(req.getFullName().trim())
+                .email(req.getEmail().trim().toLowerCase())
+                .phoneNumber(req.getPhoneNumber().trim())
+                .idCardNumber(req.getIdCardNumber() != null ? req.getIdCardNumber().trim() : null)
+                .desiredPassword(passwordEncoder.encode(req.getDesiredPassword()))
+                .amount(reqAmount)
+                .paymentCode(code)
+                .paymentStatus("PENDING")
+                .status("PENDING")
+                .channel("ONLINE_QR")
+                .build();
+
+        com.roomily.auth.entity.LandlordRegistrationRequest saved = landlordRegistrationRequestRepository.save(request);
+        return com.roomily.auth.dto.response.LandlordRegistrationResponse.fromEntity(saved);
+    }
+
+    public com.roomily.auth.dto.response.LandlordRegistrationResponse getLandlordRequestByCode(String code) {
+        com.roomily.auth.entity.LandlordRegistrationRequest req = landlordRegistrationRequestRepository.findByPaymentCode(code)
+                .orElseThrow(() -> new ResourceNotFoundException("Không tìm thấy yêu cầu đăng ký với mã: " + code));
+        return com.roomily.auth.dto.response.LandlordRegistrationResponse.fromEntity(req);
+    }
+
+    @org.springframework.beans.factory.annotation.Value("${sepay.api-key:}")
+    private String sepayApiKey;
+
+    @org.springframework.beans.factory.annotation.Value("${sepay.webhook-token:}")
+    private String sepayWebhookToken;
+
+    @Transactional
+    public boolean processSepayWebhook(com.roomily.auth.dto.request.SepayWebhookRequest webhook) {
+        return processSepayWebhook(webhook, null);
+    }
+
+    @Transactional
+    public boolean processSepayWebhook(com.roomily.auth.dto.request.SepayWebhookRequest webhook, String authHeader) {
+        if (webhook == null) return false;
+
+        // 1. Kiểm tra xác thực Webhook Token / API Key (nếu hệ thống có cấu hình)
+        String expectedKey = (sepayApiKey != null && !sepayApiKey.isBlank()) ? sepayApiKey : sepayWebhookToken;
+        if (expectedKey != null && !expectedKey.isBlank()) {
+            if (authHeader == null || (!authHeader.contains(expectedKey) && !authHeader.equalsIgnoreCase("Apikey " + expectedKey))) {
+                log.warn("[SePay Webhook] Từ chối webhook: Authorization header không khớp API Key! Header: {}", authHeader);
+                return false;
+            }
+        }
+
+        // 2. Kiểm tra loại giao dịch: chỉ xử lý tiền vào hoặc transferAmount > 0
+        if (webhook.getTransferAmount() == null || webhook.getTransferAmount().compareTo(java.math.BigDecimal.ZERO) <= 0) {
+            log.info("[SePay Webhook] Bỏ qua giao dịch không phải nạp tiền: {}", webhook);
+            return false;
+        }
+
+        String content = webhook.getContent() != null ? webhook.getContent().toUpperCase() : "";
+        String code = webhook.getCode() != null ? webhook.getCode().toUpperCase() : "";
+        String normalizedContent = content.replaceAll("[^A-Z0-9]", "");
+        String normalizedCode = code.replaceAll("[^A-Z0-9]", "");
+
+        // 3. XỬ LÝ IDEMPOTENCY: Nếu đơn đã được APPROVED trước đó (SePay retry)
+        java.util.List<com.roomily.auth.entity.LandlordRegistrationRequest> allRequests =
+                landlordRegistrationRequestRepository.findAll();
+
+        for (com.roomily.auth.entity.LandlordRegistrationRequest req : allRequests) {
+            String pCode = req.getPaymentCode() != null ? req.getPaymentCode().toUpperCase() : "";
+            String normalizedPCode = pCode.replaceAll("[^A-Z0-9]", "");
+
+            if (!pCode.isBlank() && (
+                    content.contains(pCode) ||
+                    code.contains(pCode) ||
+                    (!normalizedPCode.isEmpty() && (normalizedContent.contains(normalizedPCode) || normalizedCode.contains(normalizedPCode)))
+            )) {
+                if ("APPROVED".equalsIgnoreCase(req.getStatus())) {
+                    log.info("[SePay Webhook] [Idempotent] Đơn đăng ký #{} (Mã {}) đã được kích hoạt trước đó. Xác nhận thành công để SePay không gửi lại.",
+                            req.getId(), req.getPaymentCode());
+                    return true;
+                }
+            }
+        }
+
+        // 4. Tìm kiếm đơn PENDING để đối soát nội dung
+        com.roomily.auth.entity.LandlordRegistrationRequest matchedRequest = null;
+        for (com.roomily.auth.entity.LandlordRegistrationRequest req : allRequests) {
+            if (!"PENDING".equalsIgnoreCase(req.getStatus())) continue;
+
+            String pCode = req.getPaymentCode() != null ? req.getPaymentCode().toUpperCase() : "";
+            String normalizedPCode = pCode.replaceAll("[^A-Z0-9]", "");
+
+            if (!pCode.isBlank() && (
+                    content.contains(pCode) ||
+                    code.contains(pCode) ||
+                    (!normalizedPCode.isEmpty() && (normalizedContent.contains(normalizedPCode) || normalizedCode.contains(normalizedPCode)))
+            )) {
+                matchedRequest = req;
+                break;
+            }
+        }
+
+        if (matchedRequest == null) {
+            log.warn("[SePay Webhook] Không tìm thấy đơn đăng ký PENDING nào khớp với nội dung: {}", content);
+            return false;
+        }
+
+        // 5. ĐỐI SOÁT SỐ TIỀN: Chắc chắn tiền chuyển phải >= số tiền yêu cầu của đơn
+        if (matchedRequest.getAmount() != null && webhook.getTransferAmount().compareTo(matchedRequest.getAmount()) < 0) {
+            log.warn("[SePay Webhook] Số tiền thanh toán không đủ cho đơn ID {}: nhận được {} đ, yêu cầu {} đ",
+                    matchedRequest.getId(), webhook.getTransferAmount(), matchedRequest.getAmount());
+            matchedRequest.setAdminNote((matchedRequest.getAdminNote() != null ? matchedRequest.getAdminNote() + " | " : "")
+                    + "Cảnh báo thiếu tiền: Nhận " + webhook.getTransferAmount() + "đ (Yêu cầu " + matchedRequest.getAmount() + "đ)");
+            landlordRegistrationRequestRepository.save(matchedRequest);
+            return false;
+        }
+
+        log.info("[SePay Webhook] Khớp đơn đăng ký ID: {}, Email: {}, Số tiền: {}", 
+                matchedRequest.getId(), matchedRequest.getEmail(), webhook.getTransferAmount());
+
+        // 6. Kích hoạt User thành LANDLORD
+        String email = matchedRequest.getEmail().trim().toLowerCase();
+        User user = userRepository.findByEmail(email).orElse(null);
+        if (user == null) {
+            user = User.builder()
+                    .email(email)
+                    .fullName(matchedRequest.getFullName().trim())
+                    .phoneNumber(matchedRequest.getPhoneNumber())
+                    .idCardNumber(matchedRequest.getIdCardNumber())
+                    .password(matchedRequest.getDesiredPassword() != null ? matchedRequest.getDesiredPassword() : passwordEncoder.encode("123456"))
+                    .role("LANDLORD")
+                    .status("ACTIVE")
+                    .provider("LOCAL")
+                    .emailVerified(true)
+                    .build();
+        } else {
+            user.setRole("LANDLORD");
+            user.setStatus("ACTIVE");
+            if (matchedRequest.getPhoneNumber() != null && !matchedRequest.getPhoneNumber().isBlank()) {
+                user.setPhoneNumber(matchedRequest.getPhoneNumber());
+            }
+            if (matchedRequest.getIdCardNumber() != null && !matchedRequest.getIdCardNumber().isBlank()) {
+                user.setIdCardNumber(matchedRequest.getIdCardNumber());
+            }
+            if (matchedRequest.getDesiredPassword() != null && !matchedRequest.getDesiredPassword().isBlank()) {
+                user.setPassword(matchedRequest.getDesiredPassword());
+            }
+        }
+        userRepository.save(user);
+
+        // 7. Cập nhật trạng thái đơn
+        matchedRequest.setStatus("APPROVED");
+        matchedRequest.setPaymentStatus("PAID");
+        matchedRequest.setAdminNote((matchedRequest.getAdminNote() != null ? matchedRequest.getAdminNote() + " | " : "") 
+                + "Tự động kích hoạt qua SePay Webhook (Mã GD: " + webhook.getId() + " - " + webhook.getGateway() + ")");
+        landlordRegistrationRequestRepository.save(matchedRequest);
+
+        log.info("[SePay Webhook] Đã kích hoạt tài khoản Chủ trọ thành công cho email: {}", email);
+        return true;
+    }
 
     @Transactional
     public UserResponse register(RegisterRequest req) {

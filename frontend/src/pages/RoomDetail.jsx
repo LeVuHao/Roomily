@@ -2,6 +2,11 @@ import React, { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { propertyApi, rentalApi } from "../api/apiClient";
 import { useAuth } from "../context/AuthContext";
+import ImageGalleryGrid from "../components/ImageGalleryGrid";
+import MonthlyCostCalculator from "../components/MonthlyCostCalculator";
+import { Flag } from "lucide-react";
+import ReportModal from "../components/ReportModal";
+
 
 const fallbackImages = [
   "https://images.unsplash.com/photo-1522771739844-6a9f6d5f14af?w=1200",
@@ -28,6 +33,7 @@ const RoomDetail = () => {
   const [message, setMessage] = useState("");
   const [result, setResult] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  const [reportModalOpen, setReportModalOpen] = useState(false);
 
   useEffect(() => {
     setRoom(null);
@@ -130,26 +136,7 @@ const RoomDetail = () => {
       </div>
       <div className="wrap detail-layout">
         <main>
-          <div className="gallery">
-            <div className="gallery-main">
-              <img
-                src={images[activeImage]}
-                alt={room.propertyTitle || "Chi tiết phòng"}
-              />
-              <span className="verified">Chủ trọ đã xác thực</span>
-            </div>
-            <div className="gallery-thumbs">
-              {images.slice(0, 5).map((image, index) => (
-                <button
-                  className={index === activeImage ? "active" : ""}
-                  key={image}
-                  onClick={() => setActiveImage(index)}
-                >
-                  <img src={image} alt={`Ảnh phòng ${index + 1}`} />
-                </button>
-              ))}
-            </div>
-          </div>
+          <ImageGalleryGrid images={images} title={room.propertyTitle || `Phòng ${room.roomNumber || id}`} />
           <div className="title-block">
             <div>
               <h1>
@@ -160,9 +147,47 @@ const RoomDetail = () => {
                 {room.address || `${room.district || ""}, ${room.city || ""}`}
               </div>
             </div>
-            <div className="price-block">
-              <b>{formatVnd(room.price)}</b>
-              <span>/tháng</span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!user) {
+                    navigate("/login");
+                    return;
+                  }
+                  setReportModalOpen(true);
+                }}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 14px',
+                  borderRadius: '10px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  color: '#EF4444',
+                  background: 'rgba(239, 68, 68, 0.08)',
+                  border: '1px solid rgba(239, 68, 68, 0.25)',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s ease'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.16)';
+                  e.currentTarget.style.borderColor = '#EF4444';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(239, 68, 68, 0.08)';
+                  e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.25)';
+                }}
+                title="Báo cáo tin đăng phòng trọ vi phạm / sai sự thật"
+              >
+                <Flag size={14} />
+                <span>Báo cáo vi phạm</span>
+              </button>
+              <div className="price-block">
+                <b>{formatVnd(room.price)}</b>
+                <span>/tháng</span>
+              </div>
             </div>
           </div>
           <div className="meta-strip">
@@ -291,6 +316,10 @@ const RoomDetail = () => {
               Miễn phí cho người thuê · Hợp đồng số tự động khi được duyệt
             </div>
           </div>
+
+          {/* Bảng tính chi phí hàng tháng */}
+          <MonthlyCostCalculator room={room} />
+
         </aside>
       </div>
       {modalType && (
@@ -330,6 +359,15 @@ const RoomDetail = () => {
           </div>
         </div>
       )}
+
+      {/* Report Modal */}
+      <ReportModal
+        isOpen={reportModalOpen}
+        onClose={() => setReportModalOpen(false)}
+        targetType="ROOM"
+        targetId={id}
+        targetTitle={`Phòng ${room.roomNumber || id} - ${room.propertyTitle || ''}`}
+      />
     </div>
   );
 };

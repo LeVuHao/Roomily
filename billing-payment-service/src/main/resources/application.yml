@@ -4,8 +4,10 @@ server:
 spring:
   application:
     name: BILLING-PAYMENT-SERVICE
+  jackson:
+    time-zone: Asia/Ho_Chi_Minh
   datasource:
-    url: jdbc:mysql://localhost:3307/db_billing_payment?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true&characterEncoding=UTF-8
+    url: jdbc:mysql://localhost:3307/db_billing_payment?useSSL=false&serverTimezone=Asia/Ho_Chi_Minh&allowPublicKeyRetrieval=true&characterEncoding=UTF-8
     username: root
     password: root123
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -24,8 +26,9 @@ eureka:
     service-url:
       defaultZone: http://localhost:8761/eureka/
 
-vnpay:
-  tmnCode: "VBJ6BRBS"
-  hashSecret: "ZPVUFQTTVBZHOSACWNQTIVDDYZLSAEFE"
-  url: "https://sandbox.vnpayment.vn/paymentv2/vpcpay.html"
-  returnUrl: "http://localhost:8080/api/v1/payments/vnpay-callback"
+sepay:
+  api-key: ${SEPAY_API_KEY:}
+  webhook-token: ${SEPAY_WEBHOOK_TOKEN:}
+  bank-code: "BIDV"
+  bank-account: "8890014407"
+  account-holder: "LE VU HAO"

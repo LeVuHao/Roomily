@@ -1,4 +1,6 @@
-﻿import React, { useState } from "react";
+
+import React, { useState } from "react";
+
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -14,25 +16,52 @@ import {
   Menu,
   ChevronLeft,
   ShieldAlert,
-  AlertTriangle
+
+  AlertTriangle,
+  Tag
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { adminApi } from "../api/apiClient";
+
 
 const AdminLayout = ({ children }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+
+  const [pendingPostsCount, setPendingPostsCount] = useState(0);
   const location = useLocation();
   const { logout, user } = useAuth();
+
+  React.useEffect(() => {
+    adminApi.getForumPostStats()
+      .then((res) => {
+        const stats = res?.data || {};
+        setPendingPostsCount(Number(stats.PENDING || 0));
+      })
+      .catch(() => {});
+  }, [location.pathname]);
 
   const menuItems = [
     { path: "/admin", icon: <LayoutDashboard size={20} />, label: "Dashboard" },
     { path: "/admin/properties", icon: <Building2 size={20} />, label: "Khu Trọ & Phòng" },
-    { path: "/admin/users", icon: <Users size={20} />, label: "Người Dùng" },
-    { path: "/admin/forum", icon: <MessageSquare size={20} />, label: "Bài Đăng" },
+    { path: "/admin/users", icon: <Users size={20} />, label: "Người Dùng & Chủ Trọ" },
+    { path: "/admin/landlord-requests", icon: <ShieldAlert size={20} />, label: "Duyệt Đăng Ký Chủ Trọ" },
+    { path: "/admin/forum-posts", icon: <MessageSquare size={20} />, label: "Bài Đăng" },
+    { path: "/admin/amenities", icon: <Tag size={20} />, label: "Tiện Ích" },
+
     { path: "/admin/audit-logs", icon: <ShieldAlert size={20} />, label: "Nhật Ký Hệ Thống" },
     { path: "/admin/reports", icon: <AlertTriangle size={20} />, label: "Khiếu Nại & Report" },
     { path: "/admin/settings", icon: <Settings size={20} />, label: "Cài Đặt" }
   ];
+
+
+  const currentLabel =
+    menuItems.find((item) =>
+      item.path === "/admin"
+        ? location.pathname === "/admin" || location.pathname === "/admin/"
+        : location.pathname.startsWith(item.path)
+    )?.label || "Dashboard";
+
 
   return (
     <div
@@ -114,7 +143,12 @@ const AdminLayout = ({ children }) => {
         {/* Navigation */}
         <nav style={{ flex: 1, padding: "20px 12px", display: "flex", flexDirection: "column", gap: "8px" }}>
           {menuItems.map((item) => {
-            const isActive = location.pathname === item.path;
+
+            const isActive =
+              item.path === "/admin"
+                ? location.pathname === "/admin" || location.pathname === "/admin/"
+                : location.pathname.startsWith(item.path);
+
             return (
               <Link
                 key={item.path}
@@ -168,8 +202,23 @@ const AdminLayout = ({ children }) => {
                     }}
                   />
                 )}
-                <div style={{ display: "flex", alignItems: "center" }}>{item.icon}</div>
-                {!isCollapsed && <span style={{ fontWeight: isActive ? "600" : "500" }}>{item.label}</span>}
+
+                {!isCollapsed && <span style={{ fontWeight: isActive ? "600" : "500", flex: 1 }}>{item.label}</span>}
+                {!isCollapsed && item.path === "/admin/forum-posts" && pendingPostsCount > 0 && (
+                  <span style={{
+                    background: "#ef4444",
+                    color: "#ffffff",
+                    fontSize: "11px",
+                    fontWeight: 800,
+                    borderRadius: "20px",
+                    padding: "2px 8px",
+                    marginLeft: "auto",
+                    boxShadow: "0 2px 6px rgba(239, 68, 68, 0.4)"
+                  }}>
+                    {pendingPostsCount}
+                  </span>
+                )}
+
               </Link>
             );
           })}
@@ -263,7 +312,9 @@ title="Đăng xuất"
               {isCollapsed ? <Menu size={20} /> : <ChevronLeft size={20} />}
             </button>
             <div style={{ color: isDarkMode ? "#94A3B8" : "#64748B", fontSize: "14px", fontWeight: "500" }}>
-              Admin / <span style={{ color: "#8B5CF6" }}>Dashboard</span>
+
+              Admin / <span style={{ color: "#8B5CF6" }}>{currentLabel}</span>
+
             </div>
           </div>
 
@@ -350,8 +401,6 @@ title="Đăng xuất"
   );
 };
 
+
 export default AdminLayout;
-
-
-
 

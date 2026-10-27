@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { propertyApi, forumApi, unwrapApiData } from "../api/apiClient";
 import { motion } from "framer-motion";
 import CountUpPkg from "react-countup";
+import { useCompare } from "../context/CompareContext";
+import { BarChart2 } from "lucide-react";
 
 const CountUp = CountUpPkg.default || CountUpPkg;
 
@@ -12,33 +14,72 @@ const formatVnd = (value) => `${Number(value || 0).toLocaleString("vi-VN")}đ`;
 const roomImage = (room) =>
   room.images?.[0] || room.thumbnailUrl || fallbackImage;
 
-const RoomCard = ({ room }) => (
-  <Link to={`/rooms/${room.id}`} className="room-card hover-card-effect">
-    <div className="room-photo">
-      <img
-        src={roomImage(room)}
-        alt={room.propertyTitle || `Phòng ${room.roomNumber}`}
-        loading="lazy"
-      />
-      <span className="verified">Đã xác thực</span>
-      <span className="price-tag">{formatVnd(room.price)}</span>
+const RoomCard = ({ room }) => {
+  const { addToCompare, removeFromCompare, isInCompare } = useCompare();
+  const inCmp = isInCompare(room.id);
+
+  return (
+    <div className="room-card hover-card-effect" style={{ position: "relative" }}>
+      <Link to={`/rooms/${room.id}`} style={{ textDecoration: "none", color: "inherit", display: "block" }}>
+        <div className="room-photo">
+          <img
+            src={roomImage(room)}
+            alt={room.propertyTitle || `Phòng ${room.roomNumber}`}
+            loading="lazy"
+          />
+          <span className="verified">Đã xác thực</span>
+          <span className="price-tag">{formatVnd(room.price)}</span>
+        </div>
+        <div className="room-body">
+          <div className="room-address">
+            {room.address || `${room.district || ""}, ${room.city || ""}`}
+          </div>
+          <div className="room-title">
+            {room.propertyTitle || `Phòng ${room.roomNumber || ""}`}
+          </div>
+          <div className="room-meta">
+            <span>{room.area || "--"}m²</span>
+            <span>
+              {room.status === "ROOMMATE_OPEN" ? "🔥 Còn chỗ ở ghép" : room.status === "FULL" ? "🔒 Đã có người thuê" : "🟢 Còn trống"}
+            </span>
+          </div>
+        </div>
+      </Link>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          if (inCmp) removeFromCompare(room.id);
+          else addToCompare(room);
+        }}
+        style={{
+          position: "absolute",
+          top: "12px",
+          right: "12px",
+          zIndex: 3,
+          background: inCmp ? "#7c3aed" : "rgba(0,0,0,0.6)",
+          color: "white",
+          border: "none",
+          borderRadius: "8px",
+          padding: "5px 8px",
+          fontSize: "11px",
+          fontWeight: 700,
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          gap: "4px",
+          backdropFilter: "blur(4px)",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.25)"
+        }}
+        title={inCmp ? "Bỏ khỏi so sánh" : "Thêm vào so sánh"}
+      >
+        <BarChart2 size={12} />
+        {inCmp ? "Đang chọn" : "So sánh"}
+      </button>
     </div>
-    <div className="room-body">
-      <div className="room-address">
-        {room.address || `${room.district || ""}, ${room.city || ""}`}
-      </div>
-      <div className="room-title">
-        {room.propertyTitle || `Phòng ${room.roomNumber || ""}`}
-      </div>
-      <div className="room-meta">
-        <span>{room.area || "--"}m²</span>
-        <span>
-          {room.status === "ROOMMATE_OPEN" ? "🔥 Còn chỗ ở ghép" : room.status === "FULL" ? "🔒 Đã có người thuê" : "🟢 Còn trống"}
-        </span>
-      </div>
-    </div>
-  </Link>
-);
+  );
+};
 
 const Home = () => {
   const navigate = useNavigate();
@@ -119,12 +160,12 @@ const Home = () => {
                 <select
                   value={maxPrice}
                   onChange={(event) => setMaxPrice(event.target.value)}
-                  style={{ transition: 'all 0.3s ease' }}
+                  style={{ transition: 'all 0.3s ease', color: 'var(--text-primary)', background: 'transparent' }}
                 >
-                  <option value="">Tất cả mức giá</option>
-                  <option value="2000000">Dưới 2 triệu</option>
-                  <option value="4000000">Dưới 4 triệu</option>
-                  <option value="7000000">Dưới 7 triệu</option>
+                  <option style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }} value="">Tất cả mức giá</option>
+                  <option style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }} value="2000000">Dưới 2 triệu</option>
+                  <option style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }} value="4000000">Dưới 4 triệu</option>
+                  <option style={{ background: 'var(--bg-card)', color: 'var(--text-primary)' }} value="7000000">Dưới 7 triệu</option>
                 </select>
               </div>
               <div className="search-field">
@@ -179,11 +220,52 @@ const Home = () => {
                 </div>
               </div>
             </div>
-            <div className="hero-note glassmorphism hover-card-effect">
-              <b>Đăng ký nhanh, miễn phí</b>
-              <p>
-                Ai cũng có thể đăng ký làm chủ trọ và bắt đầu quản lý phòng ngay.
-              </p>
+            <div 
+              className="hero-note hover-card-effect"
+              style={{
+                background: "linear-gradient(135deg, #1E1B4B 0%, #312E81 100%)",
+                color: "#FFFFFF",
+                padding: "20px 22px",
+                borderRadius: "18px",
+                boxShadow: "0 12px 30px rgba(49, 46, 129, 0.35)",
+                border: "1px solid rgba(255,255,255,0.15)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 16
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "inline-flex", alignItems: "center", gap: 6, background: "rgba(253, 224, 71, 0.2)", color: "#FDE047", padding: "2px 8px", borderRadius: 12, fontSize: 11, fontWeight: 700, marginBottom: 6 }}>
+                  ⚡ DÀNH CHO CHỦ TRỌ
+                </div>
+                <div style={{ fontWeight: 800, fontSize: "1.05rem", color: "#FFFFFF", margin: "2px 0 4px 0" }}>
+                  Mở Quyền Đăng Tin & Quản Lý Trọ
+                </div>
+                <p style={{ margin: 0, fontSize: 12.5, color: "#C7D2FE", lineHeight: 1.4 }}>
+                  Quét mã VietQR SePay hoặc gọi Hotline Admin: <strong style={{ color: "#FDE047" }}>0348.108.630</strong>
+                </p>
+              </div>
+
+              <Link
+                to="/register-landlord"
+                style={{
+                  background: "#FDE047",
+                  color: "#1E1B4B",
+                  fontWeight: 800,
+                  fontSize: 13,
+                  padding: "10px 16px",
+                  borderRadius: 12,
+                  textDecoration: "none",
+                  whiteSpace: "nowrap",
+                  boxShadow: "0 4px 12px rgba(253, 224, 71, 0.4)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6
+                }}
+              >
+                Quét QR Ngay →
+              </Link>
             </div>
           </motion.div>
 
@@ -273,13 +355,13 @@ const Home = () => {
               <span className="badge" style={{ background: "#2563eb", color: "#fff", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
                 TÍNH NĂNG MỚI
               </span>
-              <h2 style={{ marginTop: 12, color: "#fff" }}>Diễn Đàn Cho Thuê Trọ (Facebook Feed)</h2>
+              <h2 style={{ marginTop: 12, color: "#fff" }}>Diễn Đàn Tìm & Cho Thuê Trọ</h2>
               <p style={{ color: "#94a3b8" }}>
-                Chủ trọ có thể tự do đăng bài kèm hình ảnh thực tế, địa chỉ, giá cả. Người thuê có thể xem trực tiếp và gửi tin nhắn liên hệ chủ trọ ngay lập tức!
+                Chủ trọ có thể tự do đăng bài kèm hình ảnh thực tế, địa chỉ, giá cả. Người thuê có thể dễ dàng tìm kiếm, lọc phòng trọ và liên hệ chủ trọ ngay lập tức!
               </p>
               <div style={{ display: "flex", gap: 12, marginTop: 16 }}>
-                <Link to="/forum" className="btn btn-primary" style={{ background: "#2563eb" }}>
-                  Khám phá diễn đàn
+                <Link to="/rooms" className="btn btn-primary" style={{ background: "#2563eb" }}>
+                  Khám phá phòng trọ & diễn đàn
                 </Link>
                 <Link to="/forum/create" className="btn" style={{ background: "rgba(255,255,255,0.1)", color: "#fff" }}>
                   Đăng bài cho thuê ngay

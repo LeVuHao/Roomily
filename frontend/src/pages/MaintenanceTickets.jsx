@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { maintenanceApi } from "../api/apiClient";
+
+import { useSearchParams } from "react-router-dom";
+import { maintenanceApi, contractApi } from "../api/apiClient";
+
 import { useAuth } from "../context/AuthContext";
 import toast from "react-hot-toast";
 import {
@@ -19,18 +22,20 @@ const CATEGORIES = [
 ];
 
 const URGENCIES = [
-  { value: "LOW", label: "Thấp", color: "#10b981", bg: "#ecfdf5" },
-  { value: "NORMAL", label: "Bình thường", color: "#f59e0b", bg: "#fffbeb" },
-  { value: "HIGH", label: "Cao", color: "#f97316", bg: "#fff7ed" },
-  { value: "URGENT", label: "Khẩn cấp", color: "#ef4444", bg: "#fef2f2" },
+
+  { value: "LOW", label: "Thấp", color: "#10b981", bg: "rgba(16, 185, 129, 0.15)" },
+  { value: "NORMAL", label: "Bình thường", color: "#f59e0b", bg: "rgba(245, 158, 11, 0.15)" },
+  { value: "HIGH", label: "Cao", color: "#f97316", bg: "rgba(249, 115, 22, 0.15)" },
+  { value: "URGENT", label: "Khẩn cấp", color: "#ef4444", bg: "rgba(239, 68, 68, 0.15)" },
 ];
 
 const STATUS_CONFIG = {
-  OPEN: { label: "Chờ xử lý", color: "#f59e0b", bg: "#fffbeb", icon: <Clock size={14} /> },
-  IN_PROGRESS: { label: "Đang xử lý", color: "#3b82f6", bg: "#eff6ff", icon: <Wrench size={14} /> },
-  RESOLVED: { label: "Đã xử lý", color: "#10b981", bg: "#ecfdf5", icon: <CheckCircle2 size={14} /> },
-  CLOSED: { label: "Đã đóng", color: "#6b7280", bg: "#f9fafb", icon: <CheckCircle2 size={14} /> },
-  CANCELLED: { label: "Đã hủy", color: "#9ca3af", bg: "#f3f4f6", icon: <XCircle size={14} /> },
+  OPEN: { label: "Chờ xử lý", color: "#f59e0b", bg: "rgba(245, 158, 11, 0.15)", icon: <Clock size={14} /> },
+  IN_PROGRESS: { label: "Đang xử lý", color: "#3b82f6", bg: "rgba(59, 130, 246, 0.15)", icon: <Wrench size={14} /> },
+  RESOLVED: { label: "Đã xử lý", color: "#10b981", bg: "rgba(16, 185, 129, 0.15)", icon: <CheckCircle2 size={14} /> },
+  CLOSED: { label: "Đã đóng", color: "#94a3b8", bg: "rgba(148, 163, 184, 0.15)", icon: <CheckCircle2 size={14} /> },
+  CANCELLED: { label: "Đã hủy", color: "#9ca3af", bg: "rgba(156, 163, 175, 0.15)", icon: <XCircle size={14} /> },
+
 };
 
 const timeAgo = (dateStr) => {
@@ -48,7 +53,13 @@ const timeAgo = (dateStr) => {
 
 const MaintenanceTickets = () => {
   const { user } = useAuth();
+
+  const [searchParams] = useSearchParams();
+  const queryRoomId = searchParams.get('roomId');
+
   const [tickets, setTickets] = useState([]);
+  const [myRooms, setMyRooms] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
@@ -77,23 +88,50 @@ const MaintenanceTickets = () => {
     }
   };
 
-  useEffect(() => { loadTickets(); }, []);
+
+  useEffect(() => {
+    loadTickets();
+    const fetchUserRooms = async () => {
+      try {
+        const res = await contractApi.getMyContracts();
+        const active = (res.data || []).filter(c => c.status === 'ACTIVE' || c.status === 'APPROVED');
+        setMyRooms(active);
+        if (queryRoomId) {
+          setForm(f => ({ ...f, roomId: String(queryRoomId) }));
+          setShowCreate(true);
+        } else if (active.length > 0) {
+          setForm(f => ({ ...f, roomId: String(active[0].roomId) }));
+        }
+      } catch (err) {
+        console.error("Lỗi tải phòng thuê:", err);
+      }
+    };
+    fetchUserRooms();
+  }, [queryRoomId]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!form.roomId || !form.category || !form.title || !form.description) {
-      toast.error("Vui lòng điền đầy đủ thông tin!");
+    const sanitizedId = Number(String(form.roomId).replace(/\D/g, ''));
+    if (!sanitizedId) {
+      toast.error("Vui lòng chọn hoặc nhập mã phòng (VD: MP-11 hoặc 11)!");
+      return;
+    }
+    if (!form.category || !form.title || !form.description) {
+      toast.error("Vui lòng điền đầy đủ loại sự cố, tiêu đề và mô tả!");
+
       return;
     }
     setSubmitting(true);
     try {
       await maintenanceApi.createTicket({
         ...form,
-        roomId: Number(form.roomId),
+
+        roomId: sanitizedId,
       });
       toast.success("🔧 Đã gửi báo hỏng thành công!");
       setShowCreate(false);
-      setForm({ roomId: "", category: "", title: "", description: "", urgency: "NORMAL", imageUrls: [] });
+      setForm({ roomId: myRooms.length > 0 ? String(myRooms[0].roomId) : "", category: "", title: "", description: "", urgency: "NORMAL", imageUrls: [] });
+
       loadTickets();
     } catch (err) {
       toast.error(err.message || "Không thể gửi báo hỏng");
@@ -182,19 +220,57 @@ const MaintenanceTickets = () => {
             </div>
 
             <form onSubmit={handleSubmit}>
-              {/* Room ID */}
+
+              {/* Room ID / Code Selection */}
               <div style={{ marginBottom: 16 }}>
-                <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 6, color: "var(--text-muted)" }}>
-                  Mã phòng (Room ID) *
-                </label>
-                <input
-                  type="number" placeholder="Nhập mã phòng đang ở" value={form.roomId}
-                  onChange={e => setForm(f => ({ ...f, roomId: e.target.value }))}
-                  style={{
-                    width: "100%", padding: "10px 14px", border: "1px solid var(--border)",
-                    borderRadius: 8, fontSize: 14, outline: "none"
-                  }}
-                />
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <label style={{ fontSize: 13, fontWeight: 700, color: "var(--ink)" }}>
+                    Phòng cần báo sự cố *
+                  </label>
+                  {myRooms.length > 0 && (
+                    <span style={{ fontSize: 12, color: "#2563eb", fontWeight: 700 }}>
+                      ✓ Đã nhận diện từ hợp đồng của bạn
+                    </span>
+                  )}
+                </div>
+
+                {myRooms.length > 0 ? (
+                  <div>
+                    <select
+                      value={form.roomId}
+                      onChange={e => setForm(f => ({ ...f, roomId: e.target.value }))}
+                      style={{
+                        width: "100%", padding: "10px 14px", border: "1.5px solid var(--primary)",
+                        borderRadius: 8, fontSize: 14, outline: "none", background: "var(--bg-primary)",
+                        fontWeight: 700, color: "var(--text-primary)"
+                      }}
+                    >
+                      {myRooms.map(r => (
+                        <option key={r.id || r.roomId} value={r.roomId}>
+                          Mã phòng: MP-{r.roomId} — Phòng {r.roomNumber || r.roomId} ({r.propertyTitle})
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 5 }}>
+                      Mã định danh phòng của bạn: <strong style={{ color: 'var(--primary)' }}>MP-{form.roomId}</strong>. Chủ trọ sẽ nhận được báo hỏng đúng phòng này.
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="text" placeholder="Nhập mã phòng (VD: MP-11 hoặc 11)" value={form.roomId}
+                      onChange={e => setForm(f => ({ ...f, roomId: e.target.value }))}
+                      style={{
+                        width: "100%", padding: "10px 14px", border: "1px solid var(--border)",
+                        borderRadius: 8, fontSize: 14, outline: "none"
+                      }}
+                    />
+                    <div style={{ fontSize: 12, color: "#64748b", marginTop: 4 }}>
+                      Bạn có thể nhập mã phòng dạng <strong>MP-11</strong> hoặc số phòng đang thuê (xem mã phòng trong mục <strong>"Trọ của tôi"</strong>).
+                    </div>
+                  </div>
+                )}
+
               </div>
 
               {/* Category grid */}
@@ -338,8 +414,10 @@ const MaintenanceTickets = () => {
               onClick={() => setFilter(f.key)}
               style={{
                 padding: "8px 16px", borderRadius: 20, fontSize: 13, fontWeight: 600,
-                border: filter === f.key ? "1px solid var(--ink)" : "1px solid var(--border)",
-                background: filter === f.key ? "var(--ink)" : "var(--surface)",
+
+                border: filter === f.key ? "1.5px solid var(--accent)" : "1px solid var(--border)",
+                background: filter === f.key ? "var(--accent)" : "var(--surface)",
+
                 color: filter === f.key ? "#fff" : "var(--text)", cursor: "pointer",
                 transition: "all 0.2s"
               }}>
@@ -406,7 +484,9 @@ const MaintenanceTickets = () => {
                           <span style={{
                             display: "inline-flex", alignItems: "center", gap: 3,
                             padding: "2px 8px", borderRadius: 20, fontSize: 11, fontWeight: 700,
-                            background: "#fef2f2", color: "#ef4444",
+
+                            background: "rgba(239, 68, 68, 0.15)", color: "#ef4444", border: "1px solid rgba(239, 68, 68, 0.3)",
+
                             animation: "pulse 2s ease-in-out infinite"
                           }}>
                             <AlertTriangle size={11} /> KHẨN CẤP
@@ -461,20 +541,24 @@ const MaintenanceTickets = () => {
                       {ticket.landlordNote && (
                         <div style={{
                           padding: "12px 16px", borderRadius: 10,
-                          background: "#f0fdf4", border: "1px solid #bbf7d0",
+
+                          background: "rgba(16, 185, 129, 0.1)", border: "1px solid rgba(16, 185, 129, 0.25)",
                           marginBottom: 14
                         }}>
-                          <p style={{ fontSize: 12, fontWeight: 700, color: "#16a34a", marginBottom: 4 }}>
+                          <p style={{ fontSize: 12, fontWeight: 700, color: "#10b981", marginBottom: 4 }}>
                             💬 Ghi chú từ chủ trọ:
                           </p>
-                          <p style={{ fontSize: 14, color: "#15803d" }}>{ticket.landlordNote}</p>
+                          <p style={{ fontSize: 14, color: "var(--text)" }}>{ticket.landlordNote}</p>
+
                         </div>
                       )}
 
                       {/* Timeline */}
                       <div style={{
                         display: "flex", alignItems: "center", gap: 0, marginBottom: 16,
-                        background: "#f9fafb", borderRadius: 10, padding: "8px 4px", overflow: "hidden"
+
+                        background: "var(--bg-primary)", border: "1px solid var(--border)", borderRadius: 10, padding: "8px 4px", overflow: "hidden"
+
                       }}>
                         {["OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"].map((step, i) => {
                           const stepCfg = STATUS_CONFIG[step];

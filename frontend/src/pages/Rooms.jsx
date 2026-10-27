@@ -4,18 +4,64 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
   MapPin, Clock, Plus, ChevronLeft, ChevronRight,
   MessageCircle, Eye, Users, Zap, FileText, X, Search, Filter, RotateCcw,
-  Phone
+  Phone, BarChart2, SlidersHorizontal, Sparkles, ShieldCheck, LayoutGrid, List, Maximize2
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { useAuth } from "../context/AuthContext";
+import { useCompare } from "../context/CompareContext";
 import { forumApi, rentalApi, unwrapApiData } from "../api/apiClient";
 import MapView from "../components/MapView";
 import WishlistButton from "../components/WishlistButton";
+import useAmenities from "../hooks/useAmenities";
+import ReportModal from "../components/ReportModal";
 
 const PAGE_SIZE = 6;
 const API_PAGE_SIZE = 100;
 
+const AMENITY_GROUPS = [
+  { label: "Nội thất cơ bản", icon: "❄️", keywords: ["máy lạnh", "điều hòa", "tủ lạnh", "máy giặt", "giường", "nệm", "tủ quần áo"] },
+  { label: "Kết cấu phòng", icon: "🏠", keywords: ["gác", "ban công", "cửa sổ", "bếp"] },
+  { label: "An ninh & tiện ích chung", icon: "🛡️", keywords: ["khóa", "thẻ từ", "camera", "chủ", "24/24", "giờ giấc"] },
+  { label: "Quy định & tiện ích", icon: "🐶", keywords: ["thú cưng", "pet", "ở ghép", "thang máy", "bãi xe", "ô tô"] },
+];
+
+// Các địa điểm sinh viên & người đi làm quan tâm nhất
+const POPULAR_LANDMARKS = [
+  { id: "dh-qg", name: "ĐHQG / Làng Đại học", query: "Làng Đại Học Quốc Gia TP.HCM", icon: "🎓", coords: [10.8753, 106.8007], city: "Thủ Đức, TP.HCM" },
+  { id: "bach-khoa", name: "ĐH Bách Khoa TP.HCM", query: "Đại học Bách Khoa TP.HCM 268 Lý Thường Kiệt", icon: "🏛️", coords: [10.7725, 106.6578], city: "Quận 10, TP.HCM" },
+  { id: "su-pham-kt", name: "ĐH Sư Phạm Kỹ Thuật", query: "Đại học Sư phạm Kỹ thuật TP.HCM", icon: "⚙️", coords: [10.8506, 106.7719], city: "Thủ Đức, TP.HCM" },
+  { id: "kinh-te", name: "ĐH Kinh Tế (UEH)", query: "Đại học Kinh tế TP.HCM 59C Nguyễn Đình Chiểu", icon: "📈", coords: [10.7828, 106.6959], city: "Quận 3, TP.HCM" },
+  { id: "fpt-q9", name: "ĐH FPT / Khu CNC", query: "Đại học FPT TP.HCM Khu Công Nghệ Cao", icon: "💻", coords: [10.8411, 106.8099], city: "Quận 9, TP.HCM" },
+  { id: "pho-di-bo", name: "Phố đi bộ Nguyễn Huệ", query: "Phố đi bộ Nguyễn Huệ Quận 1", icon: "🏙️", coords: [10.7735, 106.7037], city: "Quận 1, TP.HCM" },
+  { id: "hang-xanh", name: "Ngã 4 Hàng Xanh", query: "Ngã tư Hàng Xanh Bình Thạnh", icon: "🚦", coords: [10.8016, 106.7114], city: "Bình Thạnh, TP.HCM" },
+  { id: "san-bay", name: "Sân bay Tân Sơn Nhất", query: "Sân bay Tân Sơn Nhất", icon: "✈️", coords: [10.8185, 106.6588], city: "Tân Bình, TP.HCM" },
+];
+
 const formatVnd = (value) => `${Number(value || 0).toLocaleString("vi-VN")}đ`;
+
+const formatDistance = (meters) => {
+  if (meters == null || isNaN(meters)) return null;
+  if (meters < 1000) return `${Math.round(meters)} m`;
+  return `${(meters / 1000).toFixed(1)} km`;
+};
+
+const isUserPost = (post, user) => {
+  if (!post || !user) return false;
+  const uid = String(user.id || user.userId || "");
+  const postLandlordId = String(post.landlordId || "");
+  const postUserId = String(post.userId || "");
+  if (uid && (postLandlordId === uid || postUserId === uid)) return true;
+  
+  const uEmail = (user.email || "").toLowerCase().trim();
+  const postEmail = (post.contactEmail || post.landlordEmail || "").toLowerCase().trim();
+  if (uEmail && postEmail && uEmail === postEmail) return true;
+
+  const uName = (user.fullName || "").toLowerCase().trim();
+  const postName = (post.landlordName || "").toLowerCase().trim();
+  if (uName && postName && uName === postName) return true;
+
+  return false;
+};
 
 const getCoordinates = (room) => {
   if (room.latitude == null || room.longitude == null || room.latitude === "" || room.longitude === "") {
@@ -54,8 +100,30 @@ const timeAgo = (dateStr) => {
   return new Date(dateStr).toLocaleDateString("vi-VN");
 };
 
+// Chuẩn hóa và làm sạch địa chỉ hiển thị (tránh lặp quận huyện, thành phố)
+const formatFullAddress = (post) => {
+  if (!post) return "Chưa cập nhật địa chỉ";
+  const rawParts = [post.address, post.ward, post.district, post.city]
+    .filter(Boolean)
+    .map((p) => String(p).trim())
+    .filter((p) => p.length > 0);
+
+  const result = [];
+  for (const part of rawParts) {
+    const isDup = result.some((existing) => {
+      const e = existing.toLowerCase();
+      const p = part.toLowerCase();
+      return e === p || (e.includes(p) && p.length > 5) || (p.includes(e) && e.length > 5);
+    });
+    if (!isDup) {
+      result.push(part);
+    }
+  }
+  return result.length > 0 ? result.join(", ") : "Chưa cập nhật địa chỉ";
+};
+
 // Carousel ảnh bài đăng
-const PostImageCarousel = ({ images }) => {
+const PostImageCarousel = ({ images, post }) => {
   const [idx, setIdx] = useState(0);
   const imgList = (images && Array.isArray(images) && images.length > 0) ? images : [];
 
@@ -70,12 +138,20 @@ const PostImageCarousel = ({ images }) => {
         <span style={{ position: "absolute", bottom: 8, left: 8, background: "rgba(0,0,0,0.65)", color: "#fff", padding: "3px 8px", borderRadius: 4, fontSize: 11, fontWeight: 600 }}>
           Ảnh phòng mẫu
         </span>
+        <div className="room-photo-actions">
+          <span className="room-photo-status">{post?.isRented ? "Đã cho thuê" : "Còn phòng"}</span>
+          {post && <WishlistButton post={post} showText={false} />}
+        </div>
       </div>
     );
   }
   return (
     <div className="forum-card-photo">
       <img src={imgList[idx]} alt="Ảnh phòng trọ" />
+      <div className="room-photo-actions">
+        <span className="room-photo-status">{post?.isRented ? "Đã cho thuê" : "Đang nhận khách"}</span>
+        {post && <WishlistButton post={post} showText={false} />}
+      </div>
       {imgList.length > 1 && (
         <>
           <button
@@ -111,12 +187,15 @@ const PostImageCarousel = ({ images }) => {
 
 const Rooms = () => {
   const { user } = useAuth();
+  const { addToCompare, removeFromCompare, isInCompare } = useCompare();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
   const [posts, setPosts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [recentRentedPost, setRecentRentedPost] = useState(null);
+  const [showFlashBanner, setShowFlashBanner] = useState(false);
+  const [landlordMyPosts, setLandlordMyPosts] = useState([]);
 
   // Bộ lọc
   const [city, setCity] = useState(searchParams.get("city") || "");
@@ -125,10 +204,19 @@ const Rooms = () => {
   const [minArea, setMinArea] = useState(searchParams.get("minArea") || "");
   const [maxArea, setMaxArea] = useState(searchParams.get("maxArea") || "");
   const [statusFilter, setStatusFilter] = useState("ALL"); // ALL | AVAILABLE | ROOMMATE | RENTED
+  const [postTab, setPostTab] = useState("ALL"); // ALL | MY_POSTS | OTHERS
+  const [showFullMap, setShowFullMap] = useState(false);
   const [selectedAmenities, setSelectedAmenities] = useState([]);
+  const amenityOptions = useAmenities(); // danh mục tiện ích do Admin quản lý
   const [sort, setSort] = useState(searchParams.get("sort") || "newest");
   const [page, setPage] = useState(0);
-  const [viewMode, setViewMode] = useState("LIST"); // LIST | MAP
+  const [viewMode, setViewMode] = useState("LIST"); // LIST | GRID | MAP
+  const [roomTypeFilter, setRoomTypeFilter] = useState("");
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [priceRange, setPriceRange] = useState([
+    Math.min(15000000, Math.max(1000000, Number(searchParams.get("minPrice")) || 1000000)),
+    Math.min(15000000, Math.max(1000000, Number(searchParams.get("maxPrice")) || 15000000)),
+  ]);
   const [roomCoordinates, setRoomCoordinates] = useState({});
   const [activeRoomId, setActiveRoomId] = useState(null);
   const [viewportBounds, setViewportBounds] = useState(null);
@@ -149,6 +237,7 @@ const Rooms = () => {
   const [rentalModalPost, setRentalModalPost] = useState(null);
   const [rentalForm, setRentalForm] = useState({ occupants: 1, moveInDate: "", note: "" });
   const [submittingRental, setSubmittingRental] = useState(false);
+  const [reportingItem, setReportingItem] = useState(null);
 
   // Modal Tìm Người Ở Ghép
   const [roommateModalPost, setRoommateModalPost] = useState(null);
@@ -192,6 +281,16 @@ const Rooms = () => {
 
       setPosts(data);
       setRecentRentedPost(data.find((post) => post.isRented) || null);
+
+      if (user && user.role === "LANDLORD") {
+        try {
+          const myRes = await forumApi.getMyPosts();
+          const myData = unwrapApiData(myRes);
+          setLandlordMyPosts(Array.isArray(myData) ? myData : []);
+        } catch {
+          // ignore
+        }
+      }
     } catch (err) {
       console.error("Lỗi khi tải bài đăng phòng trọ:", err);
       toast.error("Không thể tải danh sách bài đăng phòng trọ");
@@ -204,6 +303,41 @@ const Rooms = () => {
     fetchPosts();
   }, []);
 
+  // Quản lý hiển thị Flash banner thông báo phòng vừa duyệt (chỉ hiện tối đa 2 lần trong phiên, tự đóng sau 7s)
+  useEffect(() => {
+    if (!recentRentedPost) {
+      setShowFlashBanner(false);
+      return;
+    }
+
+    const isClosed = sessionStorage.getItem("roomily_flash_banner_closed");
+    if (isClosed === "true") {
+      setShowFlashBanner(false);
+      return;
+    }
+
+    const views = Number(sessionStorage.getItem("roomily_flash_banner_views") || 0);
+    const MAX_FLASH_VIEWS = 2; // Giới hạn số lần thông báo theo yêu cầu thay vì để hoài
+
+    if (views < MAX_FLASH_VIEWS) {
+      setShowFlashBanner(true);
+      sessionStorage.setItem("roomily_flash_banner_views", String(views + 1));
+
+      // Tự động đóng sau 7 giây
+      const timer = setTimeout(() => {
+        setShowFlashBanner(false);
+      }, 7000);
+
+      return () => clearTimeout(timer);
+    } else {
+      setShowFlashBanner(false);
+    }
+  }, [recentRentedPost]);
+
+  const handleDismissFlashBanner = () => {
+    setShowFlashBanner(false);
+    sessionStorage.setItem("roomily_flash_banner_closed", "true");
+  };
   useEffect(() => {
     const query = proximityQuery.trim();
     if (query.length < 2 || selectedSuggestion?.query === query) {
@@ -478,7 +612,8 @@ const Rooms = () => {
 
   // Lọc và sắp xếp phòng
   const filteredPosts = useMemo(() => {
-    let result = [...posts];
+    // Quy tắc: Những phòng đã có người thuê mà không tìm ở ghép thì không hiển thị ngoài diễn đàn
+    let result = posts.filter((p) => !p.isRented || Boolean(p.roommateNeeded));
 
     // Lọc theo từ khóa / khu vực
     if (city.trim()) {
@@ -517,9 +652,7 @@ const Rooms = () => {
     if (statusFilter === "AVAILABLE") {
       result = result.filter((p) => !p.isRented);
     } else if (statusFilter === "ROOMMATE") {
-      result = result.filter((p) => p.roommateNeeded);
-    } else if (statusFilter === "RENTED") {
-      result = result.filter((p) => p.isRented);
+      result = result.filter((p) => Boolean(p.roommateNeeded));
     }
 
     // Lọc theo tiện ích
@@ -530,6 +663,22 @@ const Rooms = () => {
       });
     }
 
+    if (roomTypeFilter) {
+      result = result.filter((p) => p.roomType === roomTypeFilter);
+    }
+
+    if (sort === "today") {
+      const today = new Date().toDateString();
+      result = result.filter((post) => post.createdAt && new Date(post.createdAt).toDateString() === today);
+    }
+
+    // Lọc theo Tab Người đăng (Của tôi / Người khác)
+    if (postTab === "MY_POSTS" && user) {
+      result = result.filter((p) => isUserPost(p, user));
+    } else if (postTab === "OTHERS" && user) {
+      result = result.filter((p) => !isUserPost(p, user));
+    }
+
     // Sắp xếp
     if (sort === "price-asc") {
       result.sort((a, b) => Number(a.price) - Number(b.price));
@@ -537,13 +686,37 @@ const Rooms = () => {
       result.sort((a, b) => Number(b.price) - Number(a.price));
     } else if (sort === "area-desc") {
       result.sort((a, b) => Number(b.roomArea || 0) - Number(a.roomArea || 0));
+    } else if (sort === "rating") {
+      result.sort((a, b) => Number(b.averageRating || b.rating || 0) - Number(a.averageRating || a.rating || 0));
+    } else if (sort === "recommended") {
+      result.sort((a, b) =>
+        (Number(b.viewCount || 0) + Number(b.commentCount || 0) * 2)
+        - (Number(a.viewCount || 0) + Number(a.commentCount || 0) * 2)
+      );
     } else {
-      // newest
-      result.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+      result.sort((a, b) => {
+        const dateDifference = new Date(b.createdAt) - new Date(a.createdAt);
+        if (sort !== "today") return dateDifference;
+        return dateDifference;
+      });
     }
 
     return result;
-  }, [posts, city, minPrice, maxPrice, minArea, maxArea, statusFilter, selectedAmenities, sort]);
+  }, [posts, city, minPrice, maxPrice, minArea, maxArea, statusFilter, postTab, selectedAmenities, sort, user, roomTypeFilter]);
+
+  const roomTypes = useMemo(
+    () => [...new Set(posts.map((post) => post.roomType).filter(Boolean))],
+    [posts],
+  );
+  const priceDistribution = useMemo(() => {
+    const buckets = Array(7).fill(0);
+    posts.forEach((post) => {
+      const bucket = Math.min(6, Math.floor(Number(post.price || 0) / 2000000));
+      buckets[bucket] += 1;
+    });
+    const maxBucket = Math.max(1, ...buckets);
+    return buckets.map((count) => Math.max(8, (count / maxBucket) * 100));
+  }, [posts]);
 
   const mapPosts = useMemo(
     () =>
@@ -558,10 +731,16 @@ const Rooms = () => {
   const proximityPosts = useMemo(() => {
     if (!proximityLocation) return mapPosts;
     const radiusMeters = proximityRadius * 1000;
-    return mapPosts.filter((post) => {
-      const coordinates = getCoordinates(post);
-      return coordinates && distanceInMeters(proximityLocation, coordinates) <= radiusMeters;
-    });
+    const withDistances = mapPosts
+      .map((post) => {
+        const coordinates = getCoordinates(post);
+        const dist = coordinates ? distanceInMeters(proximityLocation, coordinates) : null;
+        return { ...post, distanceToTarget: dist };
+      })
+      .filter((post) => post.distanceToTarget != null && post.distanceToTarget <= radiusMeters);
+
+    // Khi tìm kiếm quanh địa điểm, ưu tiên sắp xếp theo khoảng cách gần nhất
+    return withDistances.sort((a, b) => (a.distanceToTarget || 0) - (b.distanceToTarget || 0));
   }, [mapPosts, proximityLocation, proximityRadius]);
   const visiblePosts = useMemo(() => {
     if (!viewportBounds) return proximityPosts;
@@ -576,6 +755,16 @@ const Rooms = () => {
       return insideLatitude && insideLongitude;
     });
   }, [proximityPosts, viewportBounds]);
+
+  const myPostsCount = useMemo(() => {
+    if (!user || !posts.length) return 0;
+    return posts.filter((p) => isUserPost(p, user)).length;
+  }, [posts, user]);
+
+  const otherPostsCount = useMemo(() => {
+    if (!user || !posts.length) return posts.length;
+    return posts.filter((p) => !isUserPost(p, user)).length;
+  }, [posts, user]);
 
   // Phân trang
   const totalPages = Math.ceil(visiblePosts.length / PAGE_SIZE) || 1;
@@ -601,7 +790,16 @@ const Rooms = () => {
   // Reset trang khi đổi filter
   useEffect(() => {
     setPage(0);
-  }, [city, minPrice, maxPrice, minArea, maxArea, statusFilter, selectedAmenities, sort]);
+  }, [city, minPrice, maxPrice, minArea, maxArea, statusFilter, postTab, selectedAmenities, sort, roomTypeFilter]);
+
+  useEffect(() => {
+    if (!showAdvancedFilters) return undefined;
+    const handleEscape = (event) => {
+      if (event.key === "Escape") setShowAdvancedFilters(false);
+    };
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [showAdvancedFilters]);
 
   const clearAllFilters = () => {
     setCity("");
@@ -610,11 +808,39 @@ const Rooms = () => {
     setMinArea("");
     setMaxArea("");
     setStatusFilter("ALL");
+    setPostTab("ALL");
     setSelectedAmenities([]);
+    setRoomTypeFilter("");
     setSort("newest");
+    setPriceRange([1000000, 15000000]);
     clearProximitySearch();
     setPage(0);
   };
+
+  const updatePriceRange = (index, value) => {
+    const nextRange = [...priceRange];
+    nextRange[index] = Number(value);
+    if (index === 0 && nextRange[0] >= nextRange[1]) nextRange[0] = nextRange[1] - 500000;
+    if (index === 1 && nextRange[1] <= nextRange[0]) nextRange[1] = nextRange[0] + 500000;
+    setPriceRange(nextRange);
+    setMinPrice(nextRange[0] <= 1000000 ? "" : String(nextRange[0]));
+    setMaxPrice(nextRange[1] >= 15000000 ? "" : String(nextRange[1]));
+  };
+
+  const setQuickPrice = (min, max) => {
+    setMinPrice(min);
+    setMaxPrice(max);
+    setPriceRange([Number(min) || 1000000, Number(max) || 15000000]);
+  };
+
+  const activeFilters = [
+    city && { label: city, clear: () => setCity("") },
+    minPrice && { label: `Từ ${formatVnd(minPrice)}`, clear: () => { setMinPrice(""); setPriceRange((range) => [1000000, range[1]]); } },
+    maxPrice && { label: `Đến ${formatVnd(maxPrice)}`, clear: () => { setMaxPrice(""); setPriceRange((range) => [range[0], 15000000]); } },
+    roomTypeFilter && { label: roomTypeFilter, clear: () => setRoomTypeFilter("") },
+    ...selectedAmenities.map((amenity) => ({ label: amenity, clear: () => toggleAmenity(amenity) })),
+    proximityLocation && { label: `Gần ${selectedSuggestion?.label || proximityQuery || "địa điểm đã chọn"}`, kind: "proximity" },
+  ].filter(Boolean);
 
   const toggleAmenity = (amenity) => {
     setSelectedAmenities((prev) =>
@@ -625,11 +851,11 @@ const Rooms = () => {
   return (
     <div className="page-shell">
       {/* 1. TOP SEARCH BAR (Dải tìm kiếm nhanh trên cùng) */}
-      <section className="search-strip" style={{ background: "white", borderBottom: "1px solid var(--border)", padding: "18px 0" }}>
+      <section className="search-strip" style={{ background: "var(--bg-card)", borderBottom: "1px solid var(--border-color)", padding: "18px 0" }}>
         <div className="wrap">
           <form
-            className="search-box"
-            style={{ margin: 0, boxShadow: "0 4px 20px rgba(0,0,0,0.06)" }}
+            className="search-box rooms-search-box"
+            style={{ margin: 0, boxShadow: "0 10px 30px rgba(0,0,0,0.08)" }}
             onSubmit={(e) => {
               e.preventDefault();
               setPage(0);
@@ -642,9 +868,29 @@ const Rooms = () => {
                 <input
                   value={city}
                   onChange={(e) => setCity(e.target.value)}
-                  placeholder="VD: Bình Thạnh, Dĩ An, Thủ Đức, TP.HCM..."
+                  placeholder="Thử Bình Thạnh, Quận 10, ĐH Bách Khoa..."
+                  list="room-location-suggestions"
                 />
+                <datalist id="room-location-suggestions">
+                  {[
+                    "Quận 1", "Quận 3", "Quận 10", "Bình Thạnh", "Thủ Đức",
+                    "ĐHQG / Làng Đại học", "ĐH Bách Khoa TP.HCM", "ĐH Kinh Tế (UEH)",
+                    "ĐH FPT / Khu CNC", "ĐH Sư Phạm Kỹ Thuật",
+                  ].map((location) => <option key={location} value={location} />)}
+                </datalist>
               </div>
+            </div>
+
+            <div className="search-field" style={{ flex: 1 }}>
+              <label>Loại hình phòng</label>
+              <select
+                value={roomTypeFilter}
+                onChange={(e) => setRoomTypeFilter(e.target.value)}
+                style={{ color: "var(--text-primary)", background: "transparent" }}
+              >
+                <option value="">Tất cả loại phòng</option>
+                {roomTypes.map((roomType) => <option key={roomType} value={roomType}>{roomType}</option>)}
+              </select>
             </div>
 
             <div className="search-field" style={{ flex: 1 }}>
@@ -666,34 +912,31 @@ const Rooms = () => {
                 onChange={(e) => {
                   const val = e.target.value;
                   if (val === "u2") {
-                    setMinPrice("");
-                    setMaxPrice("2000000");
+                    setQuickPrice("", "2000000");
                   } else if (val === "2-4") {
-                    setMinPrice("2000000");
-                    setMaxPrice("4000000");
+                    setQuickPrice("2000000", "4000000");
                   } else if (val === "4-7") {
-                    setMinPrice("4000000");
-                    setMaxPrice("7000000");
+                    setQuickPrice("4000000", "7000000");
                   } else if (val === "o7") {
-                    setMinPrice("7000000");
-                    setMaxPrice("");
+                    setQuickPrice("7000000", "");
                   } else {
-                    setMinPrice("");
-                    setMaxPrice("");
+                    setQuickPrice("", "");
                   }
                 }}
+                style={{ color: "var(--text-primary)", background: "transparent" }}
               >
-                <option value="">Tất cả mức giá</option>
-                <option value="u2">Dưới 2 triệu</option>
-                <option value="2-4">2 - 4 triệu</option>
-                <option value="4-7">4 - 7 triệu</option>
-                <option value="o7">Trên 7 triệu</option>
+                <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="">Tất cả mức giá</option>
+                <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="u2">Dưới 2 triệu</option>
+                <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="2-4">2 - 4 triệu</option>
+                <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="4-7">4 - 7 triệu</option>
+                <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="o7">Trên 7 triệu</option>
               </select>
             </div>
 
             <div className="search-field" style={{ flex: 1 }}>
               <label>Diện tích</label>
               <select
+                style={{ color: "var(--text-primary)", background: "transparent" }}
                 value={
                   !minArea && !maxArea
                     ? ""
@@ -722,32 +965,147 @@ const Rooms = () => {
                   }
                 }}
               >
-                <option value="">Tất cả diện tích</option>
-                <option value="u20">Dưới 20 m²</option>
-                <option value="20-30">20 - 30 m²</option>
-                <option value="o30">Trên 30 m²</option>
+                <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="">Tất cả diện tích</option>
+                <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="u20">Dưới 20 m²</option>
+                <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="20-30">20 - 30 m²</option>
+                <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="o30">Trên 30 m²</option>
               </select>
             </div>
 
-            <button className="btn btn-accent" type="submit" style={{ padding: "0 28px", fontWeight: "bold" }}>
+            <button className="btn rooms-search-submit" type="submit" style={{ padding: "0 28px", fontWeight: "bold" }}>
               <Search size={16} style={{ marginRight: 6 }} /> Tìm phòng
             </button>
           </form>
+
+          <div className="rooms-quick-prices" aria-label="Lọc nhanh theo giá">
+            <span>Giá nhanh:</span>
+            {[
+              { label: "Dưới 2 triệu", min: "", max: "2000000" },
+              { label: "2 – 4 triệu", min: "2000000", max: "4000000" },
+              { label: "4 – 7 triệu", min: "4000000", max: "7000000" },
+              { label: "Trên 7 triệu", min: "7000000", max: "" },
+            ].map((price) => {
+              const active = minPrice === price.min && maxPrice === price.max;
+              return (
+                <button
+                  key={price.label}
+                  type="button"
+                  className={`rooms-quick-price${active ? " active" : ""}`}
+                  onClick={() => setQuickPrice(active ? "" : price.min, active ? "" : price.max)}
+                >
+                  {price.label}
+                </button>
+              );
+            })}
+            <button type="button" className="rooms-advanced-trigger" onClick={() => setShowAdvancedFilters(true)}>
+              <SlidersHorizontal size={15} /> Bộ lọc nâng cao
+            </button>
+          </div>
+
+          {/* Quick Landmark Recommendations (Đề xuất khu vực & trường học gần nhất) */}
+          <div style={{ marginTop: 14, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: "var(--ink-2)", display: "flex", alignItems: "center", gap: 4 }}>
+              🔥 Gợi ý gần các trường & địa điểm hot:
+            </span>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              {POPULAR_LANDMARKS.map((lm) => {
+                const isSelected = proximityLocation && 
+                  Math.abs(proximityLocation[0] - lm.coords[0]) < 0.001 && 
+                  Math.abs(proximityLocation[1] - lm.coords[1]) < 0.001;
+
+                return (
+                  <button
+                    key={lm.id}
+                    type="button"
+                    onClick={() => {
+                      if (isSelected) {
+                        clearProximitySearch();
+                      } else {
+                        setProximityQuery(lm.name);
+                        setProximityLocation(lm.coords);
+                        setProximityRadius(3); // Mặc định 3km
+                        setSelectedSuggestion({ label: lm.name, query: lm.name });
+                        setPage(0);
+                        toast.success(`Đang tìm các phòng trọ quanh ${lm.name} (bán kính 3 km) 📍`);
+                      }
+                    }}
+                    style={{
+                      padding: "5px 12px",
+                      borderRadius: 20,
+                      border: isSelected ? "1.5px solid var(--accent)" : "1px solid var(--border-color)",
+                      background: isSelected ? "var(--accent)" : "var(--bg-card)",
+                      color: isSelected ? "#fff" : "var(--text-primary)",
+                      fontSize: 12,
+                      fontWeight: isSelected ? 700 : 600,
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      transition: "all 0.15s ease",
+                      boxShadow: isSelected ? "0 2px 8px rgba(245, 158, 11, 0.25)" : "none"
+                    }}
+                  >
+                    <span>{lm.icon}</span>
+                    <span>{lm.name}</span>
+                    {isSelected && <span style={{ marginLeft: 2, fontSize: 11 }}>✕</span>}
+                  </button>
+                );
+              })}
+              {proximityLocation && (
+                <button
+                  type="button"
+                  onClick={clearProximitySearch}
+                  style={{
+                    padding: "4px 8px",
+                    borderRadius: 6,
+                    border: "none",
+                    background: "transparent",
+                    color: "var(--danger)",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    textDecoration: "underline"
+                  }}
+                >
+                  Xóa lọc vị trí
+                </button>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 
       {/* 2. MAIN LAYOUT: SIDEBAR BỘ LỌC + DANH SÁCH BÀI ĐĂNG PHÒNG TRỌ */}
-      <div className={`results-wrap${viewMode === "MAP" ? " is-map-view" : " is-list-view"}`}>
+      <div className={`results-wrap${viewMode === "MAP" ? " is-map-view" : viewMode === "GRID" ? " is-grid-view" : " is-list-view"}`}>
         <div className="rooms-results-column">
         {/* SIDEBAR BỘ LỌC BÊN TRÁI */}
-        <aside className="filters">
+        <aside
+          className="filters"
+          style={{
+            alignSelf: "start",
+            position: "sticky",
+            top: 76,
+            maxHeight: "calc(100vh - 90px)",
+            overflowY: "auto",
+            overflowX: "hidden",
+            overscrollBehavior: "contain",
+            padding: "20px 18px 36px",
+            boxSizing: "border-box",
+            scrollbarWidth: "thin",
+          }}
+        >
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
             <h3 style={{ fontSize: 16, fontWeight: 800, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
               <Filter size={18} color="var(--primary)" /> Bộ Lọc Phòng
             </h3>
-            <button onClick={clearAllFilters} className="btn-clear" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-              <RotateCcw size={12} /> Xóa lọc
-            </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button onClick={() => setShowAdvancedFilters(true)} className="btn-clear" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                <SlidersHorizontal size={13} /> Nâng cao
+              </button>
+              <button onClick={clearAllFilters} className="btn-clear" style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
+                <RotateCcw size={12} /> Xóa lọc
+              </button>
+            </div>
           </div>
 
           {/* Trạng thái / Nhu cầu */}
@@ -827,23 +1185,40 @@ const Rooms = () => {
           </div>
 
           {/* Tiện ích */}
-          <div className="filter-group">
+          <div className="filter-group" style={{ paddingBottom: 16 }}>
             <h4>Tiện ích phòng</h4>
-            {["Wifi", "Máy giặt", "Chỗ để xe", "Camera an ninh", "Máy lạnh", "Gác lửng"].map((amenity) => (
-              <label key={amenity} className="check-row" style={{ cursor: "pointer" }}>
-                <input
-                  type="checkbox"
-                  checked={selectedAmenities.includes(amenity)}
-                  onChange={() => toggleAmenity(amenity)}
-                />
-                <span>{amenity}</span>
-              </label>
-            ))}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "8px 6px" }}>
+              {amenityOptions.map(({ name: amenity }) => (
+                <label
+                  key={amenity}
+                  className="check-row"
+                  style={{
+                    cursor: "pointer",
+                    margin: 0,
+                    fontSize: 13,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    padding: "2px 0",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedAmenities.includes(amenity)}
+                    onChange={() => toggleAmenity(amenity)}
+                    style={{ margin: 0, flexShrink: 0, cursor: "pointer" }}
+                  />
+                  <span style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={amenity}>
+                    {amenity}
+                  </span>
+                </label>
+              ))}
+            </div>
           </div>
 
           {/* Đăng tin trọ dành cho chủ trọ */}
           {user?.role === "LANDLORD" && (
-            <div style={{ marginTop: 20 }}>
+            <div style={{ marginTop: 16, marginBottom: 16 }}>
               <Link
                 to="/forum/create"
                 className="btn btn-primary btn-block"
@@ -853,73 +1228,260 @@ const Rooms = () => {
               </Link>
             </div>
           )}
+
+          <div style={{ height: 24 }} />
         </aside>
 
-        {/* NỘI DUNG CHÍNH BÊN PHẢI (DANH SÁCH BÀI ĐĂNG PHÒNG TRỌ) */}
+        {/* NỘI DUNG CHÍNH (DANH SÁCH BÀI ĐĂNG PHÒNG TRỌ) */}
         <main className="rooms-list-pane">
-          {/* Header kết quả tìm kiếm */}
-          <div className="results-head" style={{ marginBottom: 16 }}>
-            <div>
-              <h1 style={{ fontSize: 22, fontWeight: 800, margin: 0 }}>
-                {visiblePosts.length} phòng trọ trong khu vực
-              </h1>
-              <p style={{ margin: "4px 0 0 0", color: "var(--text-muted)", fontSize: 13.5 }}>
-                Đăng tin trực tiếp từ chủ trọ, duyệt hợp đồng số và trao đổi ngay trên Roomily
-              </p>
-            </div>
+          {/* Modern Header: Tabs (Tất cả / Của tôi / Người khác) & Bộ lọc sắp xếp */}
+          <div className="rooms-results-toolbar" style={{ background: "var(--bg-card)", borderRadius: 16, padding: "16px 20px", border: "1px solid var(--border-color)", marginBottom: 20, boxShadow: "var(--shadow-soft)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+              {/* Tab phân loại bài đăng */}
+              <div style={{ display: "flex", gap: 8, background: "var(--bg-primary)", padding: 4, borderRadius: 12 }}>
+                <button
+                  onClick={() => setPostTab("ALL")}
+                  style={{
+                    padding: "8px 16px",
+                    borderRadius: 8,
+                    border: "none",
+                    cursor: "pointer",
+                    fontSize: 13.5,
+                    fontWeight: postTab === "ALL" ? 700 : 500,
+                    background: postTab === "ALL" ? "var(--bg-card)" : "transparent",
+                    color: postTab === "ALL" ? "var(--text-primary)" : "var(--text-secondary)",
+                    boxShadow: postTab === "ALL" ? "var(--shadow-soft)" : "none",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    transition: "all 0.2s"
+                  }}
+                >
+                  <Sparkles size={15} color={postTab === "ALL" ? "var(--accent)" : "currentColor"} />
+                  Tất cả bài đăng ({posts.length})
+                </button>
 
-            <div className="sort" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <div className="rooms-view-toggle" style={{ display: "flex", background: "var(--surface)", borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
-                <button
-                  onClick={() => setViewMode("LIST")}
-                  style={{
-                    padding: "6px 12px", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
-                    background: viewMode === "LIST" ? "var(--ink)" : "transparent",
-                    color: viewMode === "LIST" ? "#fff" : "var(--text-muted)",
-                    display: "flex", alignItems: "center", gap: 4
-                  }}
-                >
-                  <FileText size={14} /> Danh sách
-                </button>
-                <button
-                  onClick={() => setViewMode("MAP")}
-                  style={{
-                    padding: "6px 12px", border: "none", cursor: "pointer", fontSize: 13, fontWeight: 700,
-                    background: viewMode === "MAP" ? "var(--ink)" : "transparent",
-                    color: viewMode === "MAP" ? "#fff" : "var(--text-muted)",
-                    display: "flex", alignItems: "center", gap: 4
-                  }}
-                >
-                  <MapPin size={14} /> Bản đồ
-                </button>
+                {user && (
+                  <>
+                    <button
+                      onClick={() => setPostTab("MY_POSTS")}
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: 8,
+                        border: "none",
+                        cursor: "pointer",
+                        fontSize: 13.5,
+                        fontWeight: postTab === "MY_POSTS" ? 700 : 500,
+                        background: postTab === "MY_POSTS" ? "var(--bg-card)" : "transparent",
+                        color: postTab === "MY_POSTS" ? "var(--text-primary)" : "var(--text-secondary)",
+                        boxShadow: postTab === "MY_POSTS" ? "var(--shadow-soft)" : "none",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      <ShieldCheck size={15} color={postTab === "MY_POSTS" ? "var(--success)" : "currentColor"} />
+                      Bài đăng của tôi ({myPostsCount})
+                    </button>
+
+                    <button
+                      onClick={() => setPostTab("OTHERS")}
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: 8,
+                        border: "none",
+                        cursor: "pointer",
+                        fontSize: 13.5,
+                        fontWeight: postTab === "OTHERS" ? 700 : 500,
+                        background: postTab === "OTHERS" ? "var(--bg-card)" : "transparent",
+                        color: postTab === "OTHERS" ? "var(--text-primary)" : "var(--text-secondary)",
+                        boxShadow: postTab === "OTHERS" ? "var(--shadow-soft)" : "none",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        transition: "all 0.2s"
+                      }}
+                    >
+                      <Users size={15} />
+                      Bài của cộng đồng ({otherPostsCount})
+                    </button>
+                  </>
+                )}
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span>Sắp xếp:</span>
-                <select value={sort} onChange={(e) => setSort(e.target.value)}>
-                  <option value="newest">Mới nhất</option>
-                  <option value="price-asc">Giá thấp đến cao</option>
-                  <option value="price-desc">Giá cao đến thấp</option>
-                  <option value="area-desc">Diện tích lớn nhất</option>
+              {/* Sắp xếp */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>Sắp xếp:</span>
+                <select
+                  value={sort}
+                  onChange={(e) => setSort(e.target.value)}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    border: "1px solid var(--border-color)",
+                    fontSize: 13,
+                    background: "var(--bg-card)",
+                    color: "var(--text-primary)",
+                    fontWeight: 600,
+                    outline: "none"
+                  }}
+                >
+                  <option value="recommended">🌟 Được quan tâm nhiều</option>
+                  <option value="newest">✨ Mới nhất</option>
+                  <option value="today">⏱️ Mới đăng hôm nay</option>
+                  <option value="price-asc">💵 Giá thấp đến cao</option>
+                  <option value="price-desc">💎 Giá cao đến thấp</option>
+                  <option value="area-desc">📐 Diện tích rộng nhất</option>
+                  <option value="rating">⭐ Đánh giá cao nhất</option>
                 </select>
+                <div className="rooms-view-toggle" role="group" aria-label="Chế độ hiển thị">
+                  <button type="button" className={viewMode === "GRID" ? "active" : ""} onClick={() => setViewMode("GRID")} aria-label="Dạng lưới" title="Dạng lưới">
+                    <LayoutGrid size={16} />
+                  </button>
+                  <button type="button" className={viewMode === "LIST" ? "active" : ""} onClick={() => setViewMode("LIST")} aria-label="Dạng danh sách" title="Dạng danh sách">
+                    <List size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    className={viewMode === "MAP" ? "active" : ""}
+                    onClick={() => {
+                      if (window.matchMedia("(max-width: 820px)").matches) {
+                        setShowFullMap(true);
+                      } else {
+                        setViewMode("MAP");
+                      }
+                    }}
+                    aria-label="Danh sách và bản đồ"
+                    title="Danh sách và bản đồ"
+                  >
+                    <MapPin size={16} />
+                  </button>
+                </div>
               </div>
             </div>
+
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px dashed var(--border-color)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+                Tìm thấy <strong style={{ color: "var(--accent)" }}>{visiblePosts.length}</strong> bài đăng phòng trọ phù hợp
+              </span>
+              {viewMode !== "MAP" && (
+                <button
+                  onClick={() => setShowFullMap(true)}
+                  className="btn btn-outline"
+                  style={{ padding: "4px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 5, borderRadius: 6 }}
+                >
+                  <Maximize2 size={13} /> Mở bản đồ toàn màn hình
+                </button>
+              )}
+            </div>
+            {activeFilters.length > 0 && (
+              <div className="rooms-active-filters">
+                {activeFilters.map((filter) => (
+                  <button
+                    type="button"
+                    key={filter.label}
+                    className="rooms-filter-tag"
+                    onClick={filter.kind === "proximity" ? clearProximitySearch : filter.clear}
+                  >
+                    {filter.label}<X size={13} />
+                  </button>
+                ))}
+                <button type="button" className="rooms-clear-filters" onClick={clearAllFilters}>Xóa tất cả bộ lọc</button>
+              </div>
+            )}
           </div>
 
-          {/* Flash Announcement: Nếu có phòng vừa được duyệt */}
-          {recentRentedPost && (
-            <div className="rented-alert-banner" style={{ marginBottom: 20 }}>
-              <div className="rented-pulse-indicator">
-                <span className="rented-dot-pulse"></span>
-                <strong>
-                  ⚡ TIN MỚI: "{recentRentedPost.title}" vừa được chủ trọ duyệt thành công!
-                </strong>
+          {/* Thông báo bài đăng đang chờ Admin duyệt của chủ trọ */}
+          {user?.role === "LANDLORD" && landlordMyPosts.some((p) => p.moderationStatus === "PENDING") && (
+            <div style={{
+              background: "rgba(245, 158, 11, 0.12)",
+              border: "1.5px solid rgba(245, 158, 11, 0.3)",
+              borderRadius: "14px",
+              padding: "14px 18px",
+              marginBottom: 20,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 14,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 20 }}>⏳</span>
+                <div>
+                  <strong style={{ color: "var(--accent, #f59e0b)", fontSize: 14 }}>
+                    Bạn có {landlordMyPosts.filter((p) => p.moderationStatus === "PENDING").length} bài đăng trọ đang chờ Admin duyệt
+                  </strong>
+                  <p style={{ margin: "2px 0 0 0", fontSize: 12.5, color: "#b45309" }}>
+                    Bài đăng này chưa hiển thị công khai cho khách thuê cho đến khi Quản trị viên duyệt.
+                  </p>
+                </div>
               </div>
-              <p style={{ margin: "4px 0 0 0", fontSize: "0.85rem", opacity: 0.9 }}>
-                Khách thuê vẫn có thể nhắn tin hỏi thêm các phòng trống lân cận cùng khu vực!
-              </p>
+              <Link
+                to="/landlord/management?tab=posts"
+                className="btn btn-accent"
+                style={{ padding: "6px 14px", fontSize: 12.5, fontWeight: 700, whiteSpace: "nowrap" }}
+              >
+                Xem trạng thái duyệt →
+              </Link>
             </div>
           )}
+
+          {/* Flash Announcement: Nếu có phòng vừa được duyệt (hiển thị có giới hạn, tự đóng) */}
+          <AnimatePresence>
+            {showFlashBanner && recentRentedPost && (
+              <motion.div
+                initial={{ opacity: 0, y: -10, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, height: 0, marginBottom: 0, overflow: "hidden" }}
+                transition={{ duration: 0.3 }}
+                className="rented-alert-banner"
+                style={{
+                  marginBottom: 20,
+                  position: "relative",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  gap: 12,
+                }}
+              >
+                <div style={{ flex: 1 }}>
+                  <div className="rented-pulse-indicator">
+                    <span className="rented-dot-pulse"></span>
+                    <strong>
+                      ⚡ TIN MỚI: "{recentRentedPost.title}" vừa được chủ trọ duyệt thành công!
+                    </strong>
+                  </div>
+                  <p style={{ margin: "4px 0 0 0", fontSize: "0.85rem", opacity: 0.9 }}>
+                    Khách thuê vẫn có thể nhắn tin hỏi thêm các phòng trống lân cận cùng khu vực!
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleDismissFlashBanner}
+                  title="Đóng thông báo"
+                  style={{
+                    background: "rgba(239, 68, 68, 0.12)",
+                    border: "none",
+                    borderRadius: "50%",
+                    width: 26,
+                    height: 26,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#dc2626",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    transition: "all 0.15s ease",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239, 68, 68, 0.25)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(239, 68, 68, 0.12)"; }}
+                >
+                  <X size={15} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {/* Danh sách phòng */}
           {loading ? (
@@ -929,18 +1491,18 @@ const Rooms = () => {
               ))}
             </div>
           ) : currentItems.length === 0 ? (
-            <div className="empty-state" style={{ background: "white", borderRadius: 16, padding: "60px 20px", border: "1px solid var(--border)" }}>
+            <div className="empty-state" style={{ background: "var(--bg-card)", borderRadius: 16, padding: "60px 20px", border: "1px solid var(--border-color)", color: "var(--text-primary)" }}>
               <div style={{ fontSize: 48, marginBottom: 12 }}>🔍</div>
-              <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Không tìm thấy phòng phù hợp</h3>
+              <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Rất tiếc, chưa tìm thấy phòng khớp 100% tiêu chí của bạn!</h3>
               <p style={{ color: "var(--text-muted)", margin: "8px 0 16px 0", fontSize: 14 }}>
-                Thử nới rộng khoảng giá, đổi khu vực tìm kiếm hoặc bấm xóa bộ lọc.
+                Bạn có thể bỏ bớt bộ lọc, nới rộng khoảng giá hoặc chọn khu vực lân cận để xem thêm phòng.
               </p>
-              <button onClick={clearAllFilters} className="btn btn-outline btn-ripple">
-                <RotateCcw size={14} style={{ marginRight: 6 }} /> Xóa bộ lọc tìm kiếm
+              <button onClick={clearAllFilters} className="btn btn-primary btn-ripple">
+                <RotateCcw size={14} style={{ marginRight: 6 }} /> Bỏ bớt bộ lọc
               </button>
             </div>
           ) : (
-            <motion.div layout className="forum-posts-list rooms-cards-list" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            <motion.div layout className={`forum-posts-list rooms-cards-list${viewMode === "GRID" ? " is-grid" : ""}`} style={{ gap: 20 }}>
               <AnimatePresence>
                 {currentItems.map((post) => (
                   <motion.div
@@ -956,7 +1518,7 @@ const Rooms = () => {
                     onMouseLeave={() => setActiveRoomId(null)}
                   >
                   {/* Photo Carousel */}
-                  <PostImageCarousel images={post.images || post.imageUrls} />
+                  <PostImageCarousel images={post.images || post.imageUrls} post={post} />
 
                   {/* Body Content */}
                   <div className="forum-card-body">
@@ -968,7 +1530,7 @@ const Rooms = () => {
                         </div>
                         <div>
                           <div className="forum-author-name">
-                            {post.landlordName || "Chủ trọ"}
+                            <span>{post.landlordName || "Chủ trọ"}</span>
                             <span className="badge-verified">✓ Chính chủ</span>
                           </div>
                           <div className="forum-post-time">
@@ -978,11 +1540,20 @@ const Rooms = () => {
                         </div>
                       </div>
 
-                      {/* Badges: ĐÃ THUÊ / Ở GHÉP */}
-                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                        {post.isRented && (
+                      {/* Badges: ĐÃ THUÊ / Ở GHÉP / BÀI ĐĂNG CỦA BẠN */}
+                      <div className="forum-card-badges">
+                        {user && isUserPost(post, user) && (
+                          <span className="badge-user-post">
+                            👤 Bài đăng của bạn
+                          </span>
+                        )}
+                        {post.isRented ? (
                           <span className="rented-badge-flashing">
                             ⚡ ĐÃ CÓ NGƯỜI THUÊ
+                          </span>
+                        ) : (
+                          <span className="badge-available">
+                            🟢 Còn phòng trống
                           </span>
                         )}
                         {post.roommateNeeded && (
@@ -993,17 +1564,19 @@ const Rooms = () => {
                       </div>
                     </div>
 
-                    {/* Room Title */}
-                    <Link to={`/rooms/${post.id}`} className="forum-card-title">
-                      {post.title}
-                    </Link>
-
-                    {/* Specs: Price, Area, Type */}
-                    <div className="forum-card-specs">
+                    {/* Room Title & Price */}
+                    <div className="forum-card-title-row">
+                      <Link to={`/rooms/${post.id}`} className="forum-card-title">
+                        {post.title}
+                      </Link>
                       <div className="forum-card-price">
                         {formatVnd(post.price)}
                         <span className="forum-price-unit">/tháng</span>
                       </div>
+                    </div>
+
+                    {/* Specs: Price, Area, Type */}
+                    <div className="forum-card-specs">
                       {post.roomArea && (
                         <div className="forum-spec-item">
                           📐 {post.roomArea} m²
@@ -1016,17 +1589,24 @@ const Rooms = () => {
                       )}
                     </div>
 
-                    {/* Address */}
+                    {/* Address & Distance from search target */}
                     <div className="forum-card-address">
-                      <MapPin size={14} style={{ color: "var(--brand-primary, #2563eb)", flexShrink: 0, marginTop: 2 }} />
-                      <span>{post.address}, {post.ward}, {post.district}, {post.city}</span>
+                      <div className="forum-address-text">
+                        <MapPin size={14} className="address-pin-icon" />
+                        <span>{formatFullAddress(post)}</span>
+                      </div>
+                      {post.distanceToTarget != null && (
+                        <span className="forum-distance-badge">
+                          📍 Cách đích {formatDistance(post.distanceToTarget)}
+                        </span>
+                      )}
                     </div>
 
                     {/* Description preview */}
                     {post.description && (
                       <p className="forum-card-desc">
-                        {post.description.length > 150
-                          ? post.description.substring(0, 150) + "..."
+                        {post.description.length > 130
+                          ? post.description.substring(0, 130) + "..."
                           : post.description}
                       </p>
                     )}
@@ -1034,7 +1614,7 @@ const Rooms = () => {
                     {/* Utilities tags */}
                     {post.utilities && (
                       <div className="forum-card-utilities">
-                        {post.utilities.split(",").slice(0, 4).map((u, idx) => (
+                        {post.utilities.split(",").slice(0, 5).map((u, idx) => (
                           <span key={idx} className="utility-tag">
                             ✓ {u.trim()}
                           </span>
@@ -1044,13 +1624,13 @@ const Rooms = () => {
 
                     {/* Roommate Note Highlight (nếu có) */}
                     {post.roommateNeeded && post.roommateNote && (
-                      <div style={{ background: "#fff7ed", border: "1px dashed #fdba74", padding: "8px 12px", borderRadius: 8, margin: "10px 0", fontSize: "0.85rem", color: "#c2410c" }}>
+                      <div className="forum-roommate-note">
                         <strong>🤝 Tiêu chí ở ghép:</strong> {post.roommateNote}
                       </div>
                     )}
 
                     {/* Contact Phone & Actions */}
-                    <div className="forum-card-footer" style={{ marginTop: 12 }}>
+                    <div className="forum-card-footer">
                       {post.contactPhone && (
                         <a href={`tel:${post.contactPhone}`} className="forum-contact-phone">
                           <Phone size={14} />
@@ -1066,9 +1646,8 @@ const Rooms = () => {
                             setRentalForm({ occupants: 1, moveInDate: "", note: "" });
                           }}
                           className="btn btn-primary forum-action-btn"
-                          style={{ fontWeight: 700 }}
                         >
-                          <Zap size={15} />
+                          <Zap size={14} />
                           ⚡ Yêu cầu thuê
                         </button>
 
@@ -1085,26 +1664,69 @@ const Rooms = () => {
                             });
                           }}
                           className="btn btn-accent forum-action-btn"
-                          style={{ fontWeight: 700 }}
                         >
-                          <Users size={15} />
-                          👥 Tìm bạn ở ghép
+                          <Users size={14} />
+                          👥 Ở ghép
                         </button>
 
                         {/* 3. Xem chi tiết */}
                         <Link to={`/rooms/${post.id}`} className="btn forum-action-btn">
-                          <Eye size={15} />
-                          Xem chi tiết
+                          <Eye size={14} />
+                          Chi tiết
                         </Link>
 
                         {/* 4. Nhắn tin */}
                         <Link to={`/rooms/${post.id}`} className="btn btn-outline forum-action-btn">
-                          <MessageCircle size={15} />
+                          <MessageCircle size={14} />
                           Nhắn tin
                         </Link>
-                        
+
                         {/* 5. Yêu thích */}
-                        <WishlistButton post={post} style={{ padding: "8px", borderRadius: "8px", border: "1px solid var(--border)", background: "#fff" }} showText={false} />
+                        <WishlistButton post={post} style={{ padding: "8px", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--bg-card)" }} showText={false} />
+
+                        {/* 6. So sánh */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isInCompare(post.id)) {
+                              removeFromCompare(post.id);
+                            } else {
+                              addToCompare(post);
+                            }
+                          }}
+                          style={{
+                            padding: "8px 10px",
+                            borderRadius: "8px",
+                            border: isInCompare(post.id) ? "1px solid rgba(124,58,237,0.6)" : "1px solid var(--border)",
+                            background: isInCompare(post.id) ? "rgba(124,58,237,0.12)" : "var(--bg-card)",
+                            color: isInCompare(post.id) ? "#a78bfa" : "var(--text-secondary)",
+                            cursor: "pointer",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "5px",
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            transition: "all 0.2s",
+                          }}
+                          onMouseEnter={(e) => {
+                            if (!isInCompare(post.id)) {
+                              e.currentTarget.style.color = "#a78bfa";
+                              e.currentTarget.style.borderColor = "rgba(124,58,237,0.5)";
+                              e.currentTarget.style.background = "rgba(124,58,237,0.08)";
+                            }
+                          }}
+                          onMouseLeave={(e) => {
+                            if (!isInCompare(post.id)) {
+                              e.currentTarget.style.color = "var(--text-secondary)";
+                              e.currentTarget.style.borderColor = "var(--border)";
+                              e.currentTarget.style.background = "var(--bg-card)";
+                            }
+                          }}
+                          title={isInCompare(post.id) ? "Bỏ khỏi so sánh" : "So sánh phòng này"}
+                        >
+                          <BarChart2 size={13} />
+                          {isInCompare(post.id) ? "Đang so sánh" : "So sánh"}
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -1143,147 +1765,316 @@ const Rooms = () => {
         </main>
         </div>
 
-        <aside className="rooms-map-panel" aria-label="Bản đồ và tìm kiếm quanh khu vực">
-          <form className="proximity-search" onSubmit={handleProximitySearch}>
-            <label htmlFor="proximity-search-input">Tìm phòng gần địa điểm</label>
-            <div className="proximity-search-row">
-              <div className="proximity-input-wrap">
-                <input
-                  id="proximity-search-input"
-                  role="combobox"
-                  aria-autocomplete="list"
-                  aria-expanded={proximitySuggestionsOpen}
-                  aria-controls="proximity-location-suggestions"
-                  aria-activedescendant={
-                    activeSuggestionIndex >= 0
-                      ? `proximity-suggestion-${activeSuggestionIndex}`
-                      : undefined
-                  }
-                  value={proximityQuery}
-                  onChange={(event) => {
-                    proximitySearchControllerRef.current?.abort();
-                    setProximityLoading(false);
-                    setProximityQuery(event.target.value);
-                    setSelectedSuggestion(null);
-                    setProximitySuggestions([]);
-                    setProximitySuggestionsOpen(false);
-                    setActiveSuggestionIndex(-1);
-                    setProximityError("");
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "ArrowDown" && proximitySuggestions.length > 0) {
-                      event.preventDefault();
-                      setProximitySuggestionsOpen(true);
-                      setActiveSuggestionIndex((index) =>
-                        (index + 1) % proximitySuggestions.length,
-                      );
-                    } else if (
-                      event.key === "ArrowUp" &&
-                      proximitySuggestions.length > 0
-                    ) {
-                      event.preventDefault();
-                      setActiveSuggestionIndex((index) =>
-                        index <= 0 ? proximitySuggestions.length - 1 : index - 1,
-                      );
-                    } else if (
-                      event.key === "Enter" &&
-                      proximitySuggestionsOpen &&
-                      activeSuggestionIndex >= 0
-                    ) {
-                      event.preventDefault();
-                      chooseProximitySuggestion(proximitySuggestions[activeSuggestionIndex]);
-                    } else if (event.key === "Escape") {
-                      setProximitySuggestionsOpen(false);
-                    }
-                  }}
-                  placeholder="Nhập địa điểm, ví dụ: Đại học"
-                />
-                {proximitySuggestionsOpen && (
-                  <div
-                    id="proximity-location-suggestions"
-                    className="proximity-suggestions"
-                    role="listbox"
-                    aria-label="Gợi ý địa điểm"
-                  >
-                    {proximitySuggestionsLoading ? (
-                      <div className="proximity-suggestions-status">Đang tìm địa điểm...</div>
-                    ) : (
-                      proximitySuggestions.map((suggestion, index) => (
-                        <button
-                          id={`proximity-suggestion-${index}`}
-                          key={`${suggestion.label}-${suggestion.location.join(",")}`}
-                          type="button"
-                          className={`proximity-suggestion${index === activeSuggestionIndex ? " is-active" : ""}`}
-                          role="option"
-                          aria-selected={index === activeSuggestionIndex}
-                          onMouseDown={(event) => event.preventDefault()}
-                          onMouseEnter={() => setActiveSuggestionIndex(index)}
-                          onClick={() => chooseProximitySuggestion(suggestion)}
-                        >
-                          <MapPin size={17} aria-hidden="true" />
-                          <span>
-                            <strong>{suggestion.label}</strong>
-                            <small>{suggestion.address || "Việt Nam"}</small>
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                )}
-              </div>
-              <select
-                aria-label="Bán kính tìm kiếm"
-                value={proximityRadius}
-                onChange={(event) => {
-                  setProximityRadius(Number(event.target.value));
-                  setPage(0);
-                }}
-              >
-                <option value={1}>1 km</option>
-                <option value={3}>3 km</option>
-                <option value={5}>5 km</option>
-              </select>
-              <button type="submit" className="btn btn-primary" disabled={proximityLoading}>
-                {proximityLoading ? "Đang tìm..." : "Tìm"}
-              </button>
+
+        {/* CỘT BÊN PHẢI: MAP THU NHỎ VUÔNG VỪA PHẢI + TIỆN ÍCH BỔ SUNG */}
+        <aside className="rooms-right-sidebar">
+          {/* Widget Bản đồ thu nhỏ góc phải */}
+          <div className="compact-map-card">
+            <div className="compact-map-header">
+              <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink)", display: "flex", alignItems: "center", gap: 6 }}>
+                <MapPin size={16} color="var(--primary)" /> Bản đồ vị trí ({visiblePosts.length} phòng)
+              </span>
               <button
                 type="button"
-                className="btn btn-outline mobile-map-list-toggle"
-                onClick={() => setViewMode("LIST")}
+                onClick={() => setShowFullMap(true)}
+                style={{
+                  background: "transparent",
+                  border: "none",
+                  cursor: "pointer",
+                  color: "var(--ink-2)",
+                  fontSize: 12.5,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4
+                }}
               >
-                Danh sách
+                <Maximize2 size={13} /> Phóng to
               </button>
-              {proximityLocation && (
-                <button type="button" className="btn btn-outline" onClick={clearProximitySearch}>
-                  Xóa
-                </button>
-              )}
             </div>
-            {proximityError && <p className="proximity-search-error">{proximityError}</p>}
-            {proximityLocation && (
-              <p className="proximity-search-hint">
-                Hiển thị {proximityPosts.length} phòng trong bán kính {proximityRadius} km.
-              </p>
-            )}
-            {viewportBounds && (
-              <p className="proximity-search-hint">Danh sách đang lọc theo khung nhìn bản đồ.</p>
-            )}
-          </form>
-          <MapView
-            rooms={mapPosts}
-            height="100%"
-            defaultZoom={13}
-            activeRoomId={activeRoomId}
-            onMarkerClick={handleMarkerClick}
-            onMarkerHover={setActiveRoomId}
-            onBoundsChange={handleMapBoundsChange}
-            searchTarget={proximityLocation}
-            searchRadiusMeters={proximityLocation ? proximityRadius * 1000 : null}
-            isVisible={viewMode === "MAP"}
-            onRoomGeocoded={handleRoomGeocoded}
-          />
+
+            <div 
+              className="compact-map-preview"
+              onClick={() => setShowFullMap(true)}
+              title="Nhấn để phóng to bản đồ tìm phòng"
+            >
+              <MapView
+                rooms={mapPosts}
+                height="100%"
+                defaultZoom={12}
+                activeRoomId={activeRoomId}
+                onMarkerClick={handleMarkerClick}
+                onMarkerHover={setActiveRoomId}
+                onBoundsChange={handleMapBoundsChange}
+                searchTarget={proximityLocation}
+                searchRadiusMeters={proximityLocation ? proximityRadius * 1000 : null}
+                isVisible={true}
+                onRoomGeocoded={handleRoomGeocoded}
+              />
+              <div className="compact-map-overlay">
+                <Maximize2 size={24} />
+                <span style={{ fontSize: 13, fontWeight: 700 }}>Nhấn để mở rộng toàn màn hình</span>
+              </div>
+            </div>
+
+            {/* Quick search by location inside card */}
+            <div className="rooms-nearby-search" style={{ padding: "12px 14px", background: "var(--bg-card)", borderTop: "1px solid var(--border-color)" }}>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input
+                  value={proximityQuery}
+                  onChange={(e) => setProximityQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "ArrowDown" && proximitySuggestionsOpen) {
+                      e.preventDefault();
+                      setActiveSuggestionIndex((index) => Math.min(index + 1, proximitySuggestions.length - 1));
+                      return;
+                    }
+                    if (e.key === "ArrowUp" && proximitySuggestionsOpen) {
+                      e.preventDefault();
+                      setActiveSuggestionIndex((index) => Math.max(index - 1, 0));
+                      return;
+                    }
+                    if (e.key === "Escape") {
+                      setProximitySuggestionsOpen(false);
+                      return;
+                    }
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      if (activeSuggestionIndex >= 0 && proximitySuggestions[activeSuggestionIndex]) {
+                        chooseProximitySuggestion(proximitySuggestions[activeSuggestionIndex]);
+                      } else {
+                        handleProximitySearch(e);
+                      }
+                    }
+                  }}
+                  placeholder="Gõ tên trường ĐH, địa điểm..."
+                  role="combobox"
+                  aria-expanded={proximitySuggestionsOpen}
+                  aria-controls="proximity-location-suggestions"
+                  style={{
+                    flex: 1,
+                    padding: "6px 10px",
+                    fontSize: 12.5,
+                    border: "1px solid var(--border)",
+                    borderRadius: 6,
+                    outline: "none"
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={handleProximitySearch}
+                  className="btn btn-primary"
+                  style={{ padding: "6px 10px", fontSize: 12 }}
+                  disabled={proximityLoading}
+                >
+                  {proximityLoading ? "..." : "Tìm"}
+                </button>
+              </div>
+              {proximitySuggestionsLoading && <div className="rooms-suggestion-status">Đang tìm địa điểm...</div>}
+              {proximitySuggestionsOpen && proximitySuggestions.length > 0 && (
+                <div id="proximity-location-suggestions" className="rooms-location-suggestions" role="listbox">
+                  {proximitySuggestions.map((suggestion, index) => (
+                    <button
+                      key={`${suggestion.label}-${suggestion.address}`}
+                      type="button"
+                      role="option"
+                      aria-selected={index === activeSuggestionIndex}
+                      className={index === activeSuggestionIndex ? "active" : ""}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => chooseProximitySuggestion(suggestion)}
+                    >
+                      <MapPin size={14} />
+                      <span><strong>{suggestion.label}</strong><small>{suggestion.address}</small></span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {proximityError && <div className="rooms-suggestion-error">{proximityError}</div>}
+            </div>
+          </div>
+
+          {/* Banner thông tin hỗ trợ */}
+          <div style={{ background: "var(--bg-card)", borderRadius: 16, padding: "18px", border: "1px solid var(--border-color)", boxShadow: "var(--shadow-card)" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+              <Sparkles size={20} color="var(--primary)" style={{ flexShrink: 0, marginTop: 2 }} />
+              <div>
+                <h4 style={{ margin: 0, fontSize: 14, fontWeight: 700, color: "var(--text-primary)" }}>
+                  Đăng tin nhanh, tìm bạn dễ dàng
+                </h4>
+                <p style={{ margin: "4px 0 10px 0", fontSize: 12.5, color: "var(--text-secondary)", lineHeight: 1.4 }}>
+                  Mọi bài đăng đều được xác minh danh tính và hỗ trợ liên hệ chat trực tiếp.
+                </p>
+                {user?.role === "LANDLORD" ? (
+                  <Link
+                    to="/forum/create"
+                    className="btn btn-primary"
+                    style={{ fontSize: 12.5, padding: "7px 12px", width: "100%", justifyContent: "center", fontWeight: 700 }}
+                  >
+                    + Đăng bài trọ ngay
+                  </Link>
+                ) : (
+                  <Link
+                    to="/roommates"
+                    className="btn btn-outline"
+                    style={{ fontSize: 12.5, padding: "7px 12px", width: "100%", justifyContent: "center" }}
+                  >
+                    Khám phá tìm bạn ở ghép
+                  </Link>
+                )}
+              </div>
+            </div>
+          </div>
+
         </aside>
       </div>
+
+      <AnimatePresence>
+        {showAdvancedFilters && (
+          <motion.div
+            className="rooms-filter-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget) setShowAdvancedFilters(false);
+            }}
+          >
+            <motion.aside
+              className="rooms-filter-drawer"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="rooms-filter-title"
+              initial={{ x: "100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "100%" }}
+              transition={{ type: "spring", damping: 30, stiffness: 280 }}
+            >
+              <div className="rooms-filter-drawer-header">
+                <div>
+                  <span className="rooms-drawer-eyebrow">TÙY CHỈNH KẾT QUẢ</span>
+                  <h2 id="rooms-filter-title">Bộ lọc nâng cao</h2>
+                </div>
+                <button type="button" className="rooms-drawer-close" onClick={() => setShowAdvancedFilters(false)} aria-label="Đóng bộ lọc">
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="rooms-filter-drawer-content">
+                <section className="rooms-drawer-section">
+                  <div className="rooms-drawer-section-title">
+                    <div><strong>Khoảng giá</strong><span>Điều chỉnh ngân sách của bạn</span></div>
+                    <strong className="rooms-price-range-value">{formatVnd(priceRange[0])} – {priceRange[1] >= 15000000 ? "15.000.000đ+" : formatVnd(priceRange[1])}</strong>
+                  </div>
+                  <div className="rooms-price-chart" aria-label="Phân bổ giá phòng">
+                    {priceDistribution.map((height, index) => (
+                      <span key={index} style={{ height: `${height}%` }} title={`${index === 6 ? "12" : index * 2}–${index === 6 ? "15+" : (index + 1) * 2} triệu`} />
+                    ))}
+                  </div>
+                  <div className="rooms-dual-range">
+                    <input
+                      aria-label="Giá thấp nhất"
+                      type="range"
+                      min="1000000"
+                      max="15000000"
+                      step="250000"
+                      value={priceRange[0]}
+                      onChange={(event) => updatePriceRange(0, event.target.value)}
+                    />
+                    <input
+                      aria-label="Giá cao nhất"
+                      type="range"
+                      min="1000000"
+                      max="15000000"
+                      step="250000"
+                      value={priceRange[1]}
+                      onChange={(event) => updatePriceRange(1, event.target.value)}
+                    />
+                  </div>
+                  <div className="rooms-range-labels"><span>1 triệu</span><span>15 triệu+</span></div>
+                </section>
+
+                <section className="rooms-drawer-section">
+                  <div className="rooms-drawer-section-title">
+                    <div><strong>Loại hình phòng</strong><span>Chọn loại phòng phù hợp</span></div>
+                  </div>
+                  <div className="rooms-type-options">
+                    <button type="button" className={!roomTypeFilter ? "active" : ""} onClick={() => setRoomTypeFilter("")}>Tất cả</button>
+                    {roomTypes.map((roomType) => (
+                      <button type="button" key={roomType} className={roomTypeFilter === roomType ? "active" : ""} onClick={() => setRoomTypeFilter(roomType)}>
+                        {roomType}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="rooms-drawer-section">
+                  <div className="rooms-drawer-section-title">
+                    <div><strong>Tiện ích & cơ sở vật chất</strong><span>Chọn một hoặc nhiều tiện ích</span></div>
+                  </div>
+                  {AMENITY_GROUPS.map((group) => {
+                    const amenities = amenityOptions.filter(({ name }) =>
+                      group.keywords.some((keyword) => name.toLowerCase().includes(keyword)),
+                    );
+                    if (amenities.length === 0) return null;
+                    return (
+                      <div key={group.label} className="rooms-amenity-group">
+                        <h4>{group.icon} {group.label}</h4>
+                        <div className="rooms-amenity-grid">
+                          {amenities.map(({ name }) => (
+                            <label key={name} className="rooms-amenity-option">
+                              <input type="checkbox" checked={selectedAmenities.includes(name)} onChange={() => toggleAmenity(name)} />
+                              <span>{name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {amenityOptions.some(({ name }) => !AMENITY_GROUPS.some((group) => group.keywords.some((keyword) => name.toLowerCase().includes(keyword)))) && (
+                    <div className="rooms-amenity-group">
+                      <h4>✨ Tiện ích khác</h4>
+                      <div className="rooms-amenity-grid">
+                        {amenityOptions
+                          .filter(({ name }) => !AMENITY_GROUPS.some((group) => group.keywords.some((keyword) => name.toLowerCase().includes(keyword))))
+                          .map(({ name }) => (
+                            <label key={name} className="rooms-amenity-option">
+                              <input type="checkbox" checked={selectedAmenities.includes(name)} onChange={() => toggleAmenity(name)} />
+                              <span>{name}</span>
+                            </label>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+                </section>
+
+                <section className="rooms-drawer-section">
+                  <div className="rooms-drawer-section-title">
+                    <div><strong>Gần địa điểm bạn quan tâm</strong><span>Tìm quanh trường học, trạm xe buýt hoặc metro</span></div>
+                  </div>
+                  {proximityLocation ? (
+                    <div className="rooms-radius-control">
+                      <MapPin size={17} />
+                      <span>{selectedSuggestion?.label || proximityQuery}</span>
+                      <select value={proximityRadius} onChange={(event) => setProximityRadius(Number(event.target.value))} aria-label="Bán kính tìm kiếm">
+                        {[1, 3, 5, 10].map((radius) => <option key={radius} value={radius}>{radius} km</option>)}
+                      </select>
+                    </div>
+                  ) : (
+                    <p className="rooms-location-hint">Chọn một trường/địa điểm gợi ý phía trên hoặc dùng ô tìm địa điểm trên bản đồ để bật lọc bán kính.</p>
+                  )}
+                </section>
+              </div>
+
+              <div className="rooms-filter-drawer-footer">
+                <button type="button" className="rooms-drawer-reset" onClick={clearAllFilters}>Xóa tất cả</button>
+                <button type="button" className="rooms-drawer-apply" onClick={() => setShowAdvancedFilters(false)}>
+                  Hiển thị {visiblePosts.length} phòng
+                </button>
+              </div>
+            </motion.aside>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* MODAL GỬI YÊU CẦU THUÊ PHÒNG */}
       {rentalModalPost && (
@@ -1301,10 +2092,10 @@ const Rooms = () => {
               </button>
             </div>
 
-            <div style={{ background: "#f8fafc", padding: "10px 14px", borderRadius: 10, marginBottom: 14 }}>
-              <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>{rentalModalPost.title}</div>
-              <div style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginTop: 2 }}>
-                Chủ trọ: <strong>{rentalModalPost.landlordName}</strong> • Giá: <strong style={{ color: "#2563eb" }}>{formatVnd(rentalModalPost.price)}/tháng</strong>
+            <div style={{ background: "var(--bg-primary)", border: "1px solid var(--border-color)", padding: "10px 14px", borderRadius: 10, marginBottom: 14 }}>
+              <div style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--text-primary)" }}>{rentalModalPost.title}</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--text-secondary)", marginTop: 2 }}>
+                Chủ trọ: <strong>{rentalModalPost.landlordName}</strong> • Giá: <strong style={{ color: "var(--primary)" }}>{formatVnd(rentalModalPost.price)}/tháng</strong>
               </div>
             </div>
 
@@ -1418,11 +2209,11 @@ const Rooms = () => {
                   <select
                     value={roommateForm.gender}
                     onChange={(e) => setRoommateForm({ ...roommateForm, gender: e.target.value })}
-                    style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border)" }}
+                    style={{ width: "100%", padding: "8px 12px", borderRadius: 8, border: "1px solid var(--border-color)", background: "var(--bg-primary)", color: "var(--text-primary)" }}
                   >
-                    <option value="ALL">Nam hoặc Nữ</option>
-                    <option value="MALE">Chỉ Nam</option>
-                    <option value="FEMALE">Chỉ Nữ</option>
+                    <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="ALL">Nam hoặc Nữ</option>
+                    <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="MALE">Chỉ Nam</option>
+                    <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value="FEMALE">Chỉ Nữ</option>
                   </select>
                 </div>
               </div>
@@ -1473,6 +2264,132 @@ const Rooms = () => {
             </form>
           </div>
         </div>
+      )}
+
+      {/* MODAL PHÓNG TO BẢN ĐỒ TOÀN MÀN HÌNH (FULLSCREEN MAP DIALOG) */}
+      {showFullMap && (
+        <div className="full-map-modal" onClick={() => setShowFullMap(false)}>
+          <div className="full-map-dialog" onClick={(e) => e.stopPropagation()}>
+            {/* Header Dialog */}
+            <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--bg-card)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <div style={{ width: 36, height: 36, borderRadius: "50%", background: "var(--success-bg)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--success)" }}>
+                  <MapPin size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: 16, fontWeight: 800, color: "var(--ink)" }}>
+                    Bản Đồ Tìm Phòng Trọ Toàn Màn Hình
+                  </h3>
+                  <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)" }}>
+                    Hiển thị {mapPosts.length} phòng trên toàn hệ thống • Bấm vào ghim để xem chi tiết phòng
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowFullMap(false)}
+                style={{
+                  background: "var(--border)",
+                  border: "none",
+                  borderRadius: "50%",
+                  width: 32,
+                  height: 32,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: "var(--ink)"
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Content: Search Bar on top of map + Leaflet Map */}
+            <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
+              {/* Floating Proximity Search inside modal */}
+              <div style={{ position: "absolute", top: 12, left: 12, zIndex: 1000, background: "var(--bg-card)", border: "1px solid var(--border)", backdropFilter: "blur(6px)", padding: "10px 14px", borderRadius: 12, boxShadow: "var(--shadow-card)", display: "flex", gap: 8, alignItems: "center", maxWidth: 450, width: "calc(100% - 24px)" }}>
+                <MapPin size={16} color="var(--primary)" />
+                <input
+                  value={proximityQuery}
+                  onChange={(e) => setProximityQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleProximitySearch(e);
+                    }
+                  }}
+                  placeholder="Nhập địa điểm, trường học..."
+                  style={{
+                    flex: 1,
+                    border: "none",
+                    outline: "none",
+                    fontSize: 13,
+                    background: "transparent",
+                    color: "var(--text)"
+                  }}
+                />
+                <select
+                  value={proximityRadius}
+                  onChange={(e) => setProximityRadius(Number(e.target.value))}
+                  style={{ border: "1px solid var(--border-color)", borderRadius: 6, padding: "4px 8px", fontSize: 12, background: "var(--bg-card)", color: "var(--text-primary)" }}
+                >
+                  <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value={1}>1 km</option>
+                  <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value={3}>3 km</option>
+                  <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value={5}>5 km</option>
+                  <option style={{ background: "var(--bg-card)", color: "var(--text-primary)" }} value={10}>10 km</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={handleProximitySearch}
+                  className="btn btn-primary"
+                  style={{ padding: "6px 12px", fontSize: 12 }}
+                  disabled={proximityLoading}
+                >
+                  {proximityLoading ? "..." : "Tìm"}
+                </button>
+                {proximityLocation && (
+                  <button
+                    type="button"
+                    onClick={clearProximitySearch}
+                    className="btn btn-outline"
+                    style={{ padding: "6px 10px", fontSize: 12 }}
+                  >
+                    Xóa
+                  </button>
+                )}
+              </div>
+
+              <MapView
+                rooms={mapPosts}
+                height="100%"
+                defaultZoom={13}
+                activeRoomId={activeRoomId}
+                onMarkerClick={(room) => {
+                  handleMarkerClick(room);
+                  setShowFullMap(false);
+                }}
+                onMarkerHover={setActiveRoomId}
+                onBoundsChange={handleMapBoundsChange}
+                searchTarget={proximityLocation}
+                searchRadiusMeters={proximityLocation ? proximityRadius * 1000 : null}
+                isVisible={true}
+                onRoomGeocoded={handleRoomGeocoded}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Report Modal */}
+      {reportingItem && (
+        <ReportModal
+          isOpen={Boolean(reportingItem)}
+          onClose={() => setReportingItem(null)}
+          targetType="ROOM"
+          targetId={reportingItem.id}
+          targetTitle={reportingItem.title}
+        />
       )}
     </div>
   );

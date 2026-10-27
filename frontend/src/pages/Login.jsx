@@ -37,7 +37,7 @@ const Login = () => {
 
   return (
     <div className="container" style={{ maxWidth: '450px', marginTop: '3rem' }}>
-      <div style={{ background: 'white', padding: '2.5rem', borderRadius: '16px', boxShadow: 'var(--shadow)' }}>
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', padding: '2.5rem', borderRadius: '16px', boxShadow: 'var(--shadow)' }}>
         <h2 style={{ textAlign: 'center', marginBottom: '1.5rem', color: 'var(--primary)' }}>Đăng nhập Roomily</h2>
         {error && <div style={{ color: 'var(--danger)', marginBottom: '1rem', textAlign: 'center' }}>{error}</div>}
 
@@ -98,6 +98,13 @@ const Login = () => {
 
         <div style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.9rem' }}>
           Chưa có tài khoản? <Link to="/register" style={{ color: 'var(--primary)', fontWeight: 'bold' }}>Đăng ký ngay</Link>
+        </div>
+
+        <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px dashed #e2e8f0', textAlign: 'center', fontSize: '0.88rem', color: '#64748b' }}>
+          Bạn muốn mở tài khoản Chủ trọ?{" "}
+          <Link to="/register-landlord" style={{ color: '#4f46e5', fontWeight: 700, display: 'inline-block', marginTop: '4px' }}>
+            🏦 Đăng ký kích hoạt tài khoản Chủ trọ (VietQR) →
+          </Link>
         </div>
       </div>
     </div>

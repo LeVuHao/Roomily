@@ -1,12 +1,14 @@
-import React from "react";
+﻿import React from "react";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router-dom";
 import { Toaster } from "react-hot-toast";
 import { AuthProvider } from "./context/AuthContext";
+import { CompareProvider } from "./context/CompareContext";
+import CompareFloatingBar from "./components/CompareFloatingBar";
+import CompareModal from "./components/CompareModal";
 import Navbar from "./components/Navbar";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Home from "./pages/Home";
 import Rooms from "./pages/Rooms";
-import SearchRooms from "./pages/SearchRooms";
 import RoomDetail from "./pages/RoomDetail";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
@@ -34,21 +36,14 @@ import AdminAuditLogs from "./pages/AdminAuditLogs";
 import AdminSettings from "./pages/AdminSettings";
 import AdminReports from "./pages/AdminReports";
 
-// Component to handle layout logic based on route
 const AppContent = () => {
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith("/admin");
-
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        background: isAdminRoute ? "transparent" : "inherit",
-      }}
-    >
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: isAdminRoute ? "transparent" : "inherit" }}>
       {!isAdminRoute && <Navbar />}
+      {!isAdminRoute && <CompareFloatingBar />}
+      {!isAdminRoute && <CompareModal />}
       <main style={{ flex: 1, display: isAdminRoute ? "flex" : "block" }}>
         <Routes>
           <Route path="/" element={<Home />} />
@@ -63,13 +58,7 @@ const AppContent = () => {
           <Route path="/register-landlord" element={<RegisterLandlord />} />
           <Route path="/forgot-password" element={<ForgotPassword />} />
           <Route path="/reset-password" element={<ResetPassword />} />
-          <Route
-            element={
-              <ProtectedRoute
-                allowedRoles={["USER", "LANDLORD", "ADMIN"]}
-              />
-            }
-          >
+          <Route element={<ProtectedRoute allowedRoles={["USER", "LANDLORD", "ADMIN"]} />}>
             <Route path="/notifications" element={<Notifications />} />
             <Route path="/my-contracts" element={<MyContracts />} />
             <Route path="/contracts" element={<MyContracts />} />
@@ -84,39 +73,13 @@ const AppContent = () => {
           </Route>
           <Route element={<ProtectedRoute allowedRoles={["LANDLORD"]} />}>
             <Route path="/forum/create" element={<CreateForumPost />} />
-            <Route
-              path="/landlord/properties"
-              element={<LandlordProperties />}
-            />
-            <Route
-              path="/landlord/requests"
-              element={<LandlordRequests />}
-            />
-            <Route
-              path="/landlord/create-bill"
-              element={<LandlordCreateBill />}
-            />
-            <Route
-              path="/landlord/tickets"
-              element={<LandlordTickets />}
-            />
+            <Route path="/landlord/properties" element={<LandlordProperties />} />
+            <Route path="/landlord/requests" element={<LandlordRequests />} />
+            <Route path="/landlord/create-bill" element={<LandlordCreateBill />} />
+            <Route path="/landlord/tickets" element={<LandlordTickets />} />
           </Route>
-          
-          {/* ADMIN ROUTES WRAPPED IN ADMIN LAYOUT */}
           <Route element={<ProtectedRoute allowedRoles={["ADMIN"]} />}>
-            <Route
-              path="/admin/*"
-              element={
-                <AdminLayout>
-                  <Routes>
-                    <Route path="/" element={<AdminDashboard />} />
-                    <Route path="/reports" element={<AdminReports />} />
-                    <Route path="/audit-logs" element={<AdminAuditLogs />} />
-                    <Route path="/settings" element={<AdminSettings />} />
-                  </Routes>
-                </AdminLayout>
-              }
-            />
+            <Route path="/admin/*" element={<AdminLayout><Routes><Route path="/" element={<AdminDashboard />} /><Route path="/reports" element={<AdminReports />} /><Route path="/audit-logs" element={<AdminAuditLogs />} /><Route path="/settings" element={<AdminSettings />} /></Routes></AdminLayout>} />
           </Route>
         </Routes>
       </main>
@@ -127,13 +90,14 @@ const AppContent = () => {
 function App() {
   return (
     <AuthProvider>
-      <Toaster position="top-right" />
-      <BrowserRouter>
-        <AppContent />
-      </BrowserRouter>
+      <CompareProvider>
+        <Toaster position="top-right" />
+        <BrowserRouter>
+          <AppContent />
+        </BrowserRouter>
+      </CompareProvider>
     </AuthProvider>
   );
 }
 
 export default App;
-
